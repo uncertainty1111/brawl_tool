@@ -1,0 +1,1520 @@
+name: Build Brawl AI APK
+
+
+
+on:
+
+  push:
+
+  workflow_dispatch:
+
+
+
+permissions:
+
+  contents: write
+
+
+
+jobs:
+
+  build-apk:
+
+    runs-on: ubuntu-latest
+
+    steps:
+
+      - name: Checkout repository
+
+        uses: actions/checkout@v4
+
+
+
+      - name: Set up JDK 17
+
+        uses: actions/setup-java@v4
+
+        with:
+
+          distribution: 'temurin'
+
+          java-version: '17'
+
+
+
+      - name: Generate Android Overlay Project
+
+        run: |
+
+          python3 - << 'EOF'
+
+          import os
+
+
+
+          os.makedirs("app/src/main/java/com/brawl/aioverlay", exist_ok=True)
+
+          os.makedirs("app/src/main/res/xml", exist_ok=True)
+
+
+
+          with open("settings.gradle.kts", "w") as f:
+
+              f.write('''pluginManagement {
+
+              repositories {
+
+                  google()
+
+                  mavenCentral()
+
+                  gradlePluginPortal()
+
+              }
+
+          }
+
+          dependencyResolutionManagement {
+
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+
+              repositories {
+
+                  google()
+
+                  mavenCentral()
+
+              }
+
+          }
+
+          rootProject.name = "BrawlAiOverlay"
+
+          include(":app")
+
+          ''')
+
+
+
+          with open("build.gradle.kts", "w") as f:
+
+              f.write('''plugins {
+
+              id("com.android.application") version "8.2.2" apply false
+
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+
+          }
+
+          ''')
+
+
+
+          with open("gradle.properties", "w") as f:
+
+              f.write('''org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+
+          android.useAndroidX=true
+
+          kotlin.code.style=official
+
+          android.nonTransitiveRClass=true
+
+          ''')
+
+
+
+          with open("app/build.gradle.kts", "w") as f:
+
+              f.write('''plugins {
+
+              id("com.android.application")
+
+              id("org.jetbrains.kotlin.android")
+
+          }
+
+          android {
+
+              namespace = "com.brawl.aioverlay"
+
+              compileSdk = 34
+
+              defaultConfig {
+
+                  applicationId = "com.brawl.aioverlay"
+
+                  minSdk = 30
+
+                  targetSdk = 34
+
+                  versionCode = 1
+
+                  versionName = "1.0"
+
+              }
+
+              buildTypes {
+
+                  release {
+
+                      isMinifyEnabled = false
+
+                  }
+
+              }
+
+              compileOptions {
+
+                  sourceCompatibility = JavaVersion.VERSION_17
+
+                  targetCompatibility = JavaVersion.VERSION_17
+
+              }
+
+              kotlinOptions {
+
+                  jvmTarget = "17"
+
+              }
+
+          }
+
+          dependencies {
+
+              implementation("androidx.core:core-ktx:1.12.0")
+
+              implementation("androidx.appcompat:appcompat:1.6.1")
+
+          }
+
+          ''')
+
+
+
+          with open("app/src/main/AndroidManifest.xml", "w") as f:
+
+              f.write('''<?xml version="1.0" encoding="utf-8"?>
+
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+              <application
+
+                  android:allowBackup="true"
+
+                  android:label="Brawl AI Overlay"
+
+                  android:supportsRtl="true"
+
+                  android:theme="@style/Theme.AppCompat.NoActionBar">
+
+                  <activity
+
+                      android:name=".MainActivity"
+
+                      android:exported="true">
+
+                      <intent-filter>
+
+                          <action android:name="android.intent.action.MAIN" />
+
+                          <category android:name="android.intent.category.LAUNCHER" />
+
+                      </intent-filter>
+
+                  </activity>
+
+                  <service
+
+                      android:name=".BrawlAccessibilityService"
+
+                      android:exported="true"
+
+                      android:label="Brawl AI 패드 자동 조종"
+
+                      android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+
+                      <intent-filter>
+
+                          <action android:name="android.accessibilityservice.AccessibilityService" />
+
+                      </intent-filter>
+
+                      <meta-data
+
+                          android:name="android.accessibilityservice"
+
+                          android:resource="@xml/accessibility_service_config" />
+
+                  </service>
+
+              </application>
+
+          </manifest>
+
+          ''')
+
+
+
+          with open("app/src/main/res/xml/accessibility_service_config.xml", "w") as f:
+
+              f.write('''<?xml version="1.0" encoding="utf-8"?>
+
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+
+              android:accessibilityEventTypes="typeAllMask"
+
+              android:accessibilityFeedbackType="feedbackGeneric"
+
+              android:accessibilityFlags="flagDefault"
+
+              android:canPerformGestures="true"
+
+              android:canTakeScreenshot="true"
+
+              android:canRetrieveWindowContent="false"
+
+              android:notificationTimeout="50" />
+
+          ''')
+
+
+
+          with open("app/src/main/java/com/brawl/aioverlay/MainActivity.kt", "w") as f:
+
+              f.write('''package com.brawl.aioverlay
+
+
+
+          import android.app.Activity
+
+          import android.content.Intent
+
+          import android.graphics.Color
+
+          import android.graphics.drawable.GradientDrawable
+
+          import android.net.Uri
+
+          import android.os.Bundle
+
+          import android.provider.Settings
+
+          import android.view.Gravity
+
+          import android.widget.Button
+
+          import android.widget.LinearLayout
+
+          import android.widget.TextView
+
+          import android.widget.Toast
+
+
+
+          class MainActivity : Activity() {
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+
+                  super.onCreate(savedInstanceState)
+
+
+
+                  val root = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL
+
+                      gravity = Gravity.CENTER
+
+                      setBackgroundColor(Color.parseColor("#080D1A"))
+
+                      setPadding(60, 60, 60, 60)
+
+                  }
+
+
+
+                  val cardBg = GradientDrawable().apply {
+
+                      setColor(Color.parseColor("#111827"))
+
+                      cornerRadius = 40f
+
+                      setStroke(3, Color.parseColor("#38BDF8"))
+
+                  }
+
+
+
+                  val card = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL
+
+                      background = cardBg
+
+                      setPadding(56, 56, 56, 56)
+
+                  }
+
+
+
+                  val title = TextView(this).apply {
+
+                      text = "BRAWL AI OVERLAY"
+
+                      textSize = 22f
+
+                      setTextColor(Color.WHITE)
+
+                      setPadding(0, 0, 0, 16)
+
+                  }
+
+
+
+                  val sub = TextView(this).apply {
+
+                      text = "아래 순서대로 권한 2개를 켜고 [왼쪽 위 오버레이 실행]을 누르세요."
+
+                      textSize = 14f
+
+                      setTextColor(Color.parseColor("#94A3B8"))
+
+                      setPadding(0, 0, 0, 36)
+
+                  }
+
+
+
+                  val btn1 = Button(this).apply {
+
+                      text = "1단계: 다른 앱 위에 표시 권한 허용"
+
+                      setOnClickListener {
+
+                          if (!Settings.canDrawOverlays(this@MainActivity)) {
+
+                              startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+
+                          } else {
+
+                              Toast.makeText(context, "이미 허용되어 있습니다!", Toast.LENGTH_SHORT).show()
+
+                          }
+
+                      }
+
+                  }
+
+
+
+                  val btn2 = Button(this).apply {
+
+                      text = "2단계: 접근성 설정에서 [Brawl AI 패드 자동 조종] 켜기"
+
+                      setOnClickListener {
+
+                          startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+
+                      }
+
+                  }
+
+
+
+                  val btn3 = Button(this).apply {
+
+                      text = "3단계: 왼쪽 위 오버레이 창 띄우기 (실행)"
+
+                      setBackgroundColor(Color.parseColor("#10B981"))
+
+                      setTextColor(Color.BLACK)
+
+                      setOnClickListener {
+
+                          if (!Settings.canDrawOverlays(this@MainActivity)) {
+
+                              Toast.makeText(context, "먼저 1단계 권한을 허용해주세요.", Toast.LENGTH_LONG).show()
+
+                              return@setOnClickListener
+
+                          }
+
+                          val svc = BrawlAccessibilityService.instance
+
+                          if (svc == null) {
+
+                              Toast.makeText(context, "먼저 2단계 접근성 설정에서 [Brawl AI 패드 자동 조종]을 켜주세요!", Toast.LENGTH_LONG).show()
+
+                              startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+
+                          } else {
+
+                              svc.showFloatingWindow()
+
+                              Toast.makeText(context, "왼쪽 위에 오버레이 창이 떴습니다! 이제 브롤스타즈를 켜세요.", Toast.LENGTH_LONG).show()
+
+                              finish()
+
+                          }
+
+                      }
+
+                  }
+
+
+
+                  card.addView(title)
+
+                  card.addView(sub)
+
+                  card.addView(btn1)
+
+                  card.addView(btn2)
+
+                  card.addView(btn3)
+
+                  root.addView(card)
+
+                  setContentView(root)
+
+              }
+
+          }
+
+          ''')
+
+
+
+          with open("app/src/main/java/com/brawl/aioverlay/BrawlAccessibilityService.kt", "w") as f:
+
+              f.write('''package com.brawl.aioverlay
+
+
+
+          import android.accessibilityservice.AccessibilityService
+
+          import android.accessibilityservice.GestureDescription
+
+          import android.content.Context
+
+          import android.graphics.Bitmap
+
+          import android.graphics.Canvas
+
+          import android.graphics.Color
+
+          import android.graphics.Paint
+
+          import android.graphics.Path
+
+          import android.graphics.PixelFormat
+
+          import android.graphics.drawable.GradientDrawable
+
+          import android.os.Handler
+
+          import android.os.Looper
+
+          import android.view.Display
+
+          import android.view.Gravity
+
+          import android.view.MotionEvent
+
+          import android.view.View
+
+          import android.view.WindowManager
+
+          import android.view.accessibility.AccessibilityEvent
+
+          import android.widget.Button
+
+          import android.widget.LinearLayout
+
+          import android.widget.TextView
+
+          import kotlin.math.atan2
+
+          import kotlin.math.cos
+
+          import kotlin.math.hypot
+
+          import kotlin.math.max
+
+          import kotlin.math.min
+
+          import kotlin.math.sin
+
+          import kotlin.math.sqrt
+
+
+
+          class BrawlAccessibilityService : AccessibilityService() {
+
+
+
+              companion object {
+
+                  var instance: BrawlAccessibilityService? = null
+
+              }
+
+
+
+              private var wm: WindowManager? = null
+
+              private var rootOverlay: LinearLayout? = null
+
+              private var bodyLayout: LinearLayout? = null
+
+              private var statusText: TextView? = null
+
+              private var aiActive = false
+
+              private var minimized = false
+
+
+
+              // 사용자 상단 조이스틱 방향 지시 벡터 (-1..1)
+
+              private var cmdX = 0f
+
+              private var cmdY = 0f
+
+
+
+              // 화면 분석 상태 (상대 빨간 원 위치/속도 & 이전 프레임 밝기)
+
+              private var prevEnemyX = -1f
+
+              private var prevEnemyY = -1f
+
+              private var enemyVelX = 0f
+
+              private var enemyVelY = 0f
+
+              private var prevLuma: IntArray? = null
+
+              private var lastFireMs = 0L
+
+
+
+              private val handler = Handler(Looper.getMainLooper())
+
+              private var loopRunning = false
+
+
+
+              override fun onServiceConnected() {
+
+                  super.onServiceConnected()
+
+                  instance = this
+
+                  wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+                  showFloatingWindow()
+
+              }
+
+
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+
+              override fun onInterrupt() {}
+
+
+
+              fun showFloatingWindow() {
+
+                  if (rootOverlay != null) return
+
+
+
+                  val params = WindowManager.LayoutParams(
+
+                      430,
+
+                      WindowManager.LayoutParams.WRAP_CONTENT,
+
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+
+                      PixelFormat.TRANSLUCENT
+
+                  ).apply {
+
+                      gravity = Gravity.TOP or Gravity.START
+
+                      x = 24
+
+                      y = 24
+
+                  }
+
+
+
+                  val windowBg = GradientDrawable().apply {
+
+                      setColor(Color.parseColor("#E60F172A"))
+
+                      cornerRadius = 38f
+
+                      setStroke(3, Color.parseColor("#38BDF8"))
+
+                  }
+
+
+
+                  val container = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL
+
+                      background = windowBg
+
+                      setPadding(24, 20, 24, 24)
+
+                  }
+
+
+
+                  // 상단 드래그 헤더 바
+
+                  val header = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.HORIZONTAL
+
+                      gravity = Gravity.CENTER_VERTICAL
+
+                      setPadding(4, 0, 4, 14)
+
+                  }
+
+
+
+                  val titleTv = TextView(this).apply {
+
+                      text = "● BRAWL AI (드래그 이동)"
+
+                      textSize = 11.5f
+
+                      setTextColor(Color.parseColor("#38BDF8"))
+
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+                  }
+
+
+
+                  val btnMin = Button(this).apply {
+
+                      text = "—"
+
+                      textSize = 11f
+
+                      setPadding(8, 2, 8, 2)
+
+                      setBackgroundColor(Color.parseColor("#1E293B"))
+
+                      setTextColor(Color.WHITE)
+
+                  }
+
+
+
+                  header.addView(titleTv)
+
+                  header.addView(btnMin)
+
+
+
+                  // 헤더 드래그로 왼쪽 위 창 위치 이동
+
+                  var startX = 0
+
+                  var startY = 0
+
+                  var touchX = 0f
+
+                  var touchY = 0f
+
+                  header.setOnTouchListener { _, ev ->
+
+                      when (ev.action) {
+
+                          MotionEvent.ACTION_DOWN -> {
+
+                              startX = params.x
+
+                              startY = params.y
+
+                              touchX = ev.rawX
+
+                              touchY = ev.rawY
+
+                              true
+
+                          }
+
+                          MotionEvent.ACTION_MOVE -> {
+
+                              params.x = startX + (ev.rawX - touchX).toInt()
+
+                              params.y = startY + (ev.rawY - touchY).toInt()
+
+                              wm?.updateViewLayout(container, params)
+
+                              true
+
+                          }
+
+                          else -> false
+
+                      }
+
+                  }
+
+
+
+                  val body = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL
+
+                  }
+
+                  bodyLayout = body
+
+
+
+                  // 1. 직접 조종 ON / OFF 스위치 버튼
+
+                  val toggleBgOn = GradientDrawable().apply {
+
+                      setColor(Color.parseColor("#10B981"))
+
+                      cornerRadius = 24f
+
+                  }
+
+                  val toggleBgOff = GradientDrawable().apply {
+
+                      setColor(Color.parseColor("#334155"))
+
+                      cornerRadius = 24f
+
+                  }
+
+
+
+                  val btnToggle = Button(this).apply {
+
+                      text = "직접 조종: OFF (누르면 시작)"
+
+                      textSize = 12f
+
+                      setTextColor(Color.WHITE)
+
+                      background = toggleBgOff
+
+                      setOnClickListener {
+
+                          aiActive = !aiActive
+
+                          if (aiActive) {
+
+                              text = "● 직접 조종: ON (누르면 멈춤)"
+
+                              setTextColor(Color.BLACK)
+
+                              background = toggleBgOn
+
+                              startControlLoop()
+
+                          } else {
+
+                              text = "직접 조종: OFF (수동 모드)"
+
+                              setTextColor(Color.WHITE)
+
+                              background = toggleBgOff
+
+                              statusText?.text = "상태: 수동 조작 대기 중"
+
+                          }
+
+                      }
+
+                  }
+
+
+
+                  // 2. 원형 무빙 방향 지시 조이스틱 뷰
+
+                  val joystickView = object : View(this) {
+
+                      private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.STROKE
+
+                          strokeWidth = 5f
+
+                          color = Color.parseColor("#38BDF8")
+
+                      }
+
+                      private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.FILL
+
+                          color = Color.parseColor("#1E293B")
+
+                      }
+
+                      private val knobPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.FILL
+
+                          color = Color.parseColor("#10B981")
+
+                      }
+
+                      private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.STROKE
+
+                          strokeWidth = 6f
+
+                          color = Color.parseColor("#38BDF8")
+
+                      }
+
+
+
+                      override fun onDraw(canvas: Canvas) {
+
+                          super.onDraw(canvas)
+
+                          val cx = width / 2f
+
+                          val cy = height / 2f
+
+                          val r = min(cx, cy) - 14f
+
+                          canvas.drawCircle(cx, cy, r, bgPaint)
+
+                          canvas.drawCircle(cx, cy, r, ringPaint)
+
+                          val kx = cx + cmdX * (r - 22f)
+
+                          val ky = cy + cmdY * (r - 22f)
+
+                          canvas.drawLine(cx, cy, kx, ky, linePaint)
+
+                          canvas.drawCircle(kx, ky, 24f, knobPaint)
+
+                      }
+
+
+
+                      override fun onTouchEvent(event: MotionEvent): Boolean {
+
+                          val cx = width / 2f
+
+                          val cy = height / 2f
+
+                          val maxR = min(cx, cy) - 18f
+
+                          when (event.action) {
+
+                              MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+
+                                  val dx = event.x - cx
+
+                                  val dy = event.y - cy
+
+                                  val d = hypot(dx, dy)
+
+                                  if (d < 6f) {
+
+                                      cmdX = 0f
+
+                                      cmdY = 0f
+
+                                  } else {
+
+                                      val scale = min(d, maxR) / maxR
+
+                                      cmdX = (dx / d) * scale
+
+                                      cmdY = (dy / d) * scale
+
+                                  }
+
+                                  invalidate()
+
+                              }
+
+                              MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+
+                                  cmdX = 0f
+
+                                  cmdY = 0f
+
+                                  invalidate()
+
+                              }
+
+                          }
+
+                          return true
+
+                      }
+
+                  }.apply {
+
+                      layoutParams = LinearLayout.LayoutParams(220, 220).apply {
+
+                          gravity = Gravity.CENTER_HORIZONTAL
+
+                          topMargin = 16
+
+                          bottomMargin = 12
+
+                      }
+
+                  }
+
+
+
+                  val stTv = TextView(this).apply {
+
+                      text = "방향 스틱 지시 + 자동 회피/에임"
+
+                      textSize = 10.5f
+
+                      gravity = Gravity.CENTER
+
+                      setTextColor(Color.parseColor("#CBD5E1"))
+
+                  }
+
+                  statusText = stTv
+
+
+
+                  btnMin.setOnClickListener {
+
+                      minimized = !minimized
+
+                      body.visibility = if (minimized) View.GONE else View.VISIBLE
+
+                      btnMin.text = if (minimized) "□" else "—"
+
+                  }
+
+
+
+                  body.addView(btnToggle)
+
+                  body.addView(joystickView)
+
+                  body.addView(stTv)
+
+
+
+                  container.addView(header)
+
+                  container.addView(body)
+
+
+
+                  rootOverlay = container
+
+                  wm?.addView(container, params)
+
+              }
+
+
+
+              private fun startControlLoop() {
+
+                  if (loopRunning) return
+
+                  loopRunning = true
+
+                  scheduleNextTick()
+
+              }
+
+
+
+              private fun scheduleNextTick() {
+
+                  if (!aiActive) {
+
+                      loopRunning = false
+
+                      return
+
+                  }
+
+                  takeScreenshot(
+
+                      Display.DEFAULT_DISPLAY,
+
+                      mainExecutor,
+
+                      object : TakeScreenshotCallback {
+
+                          override fun onSuccess(screenshot: ScreenshotResult) {
+
+                              try {
+
+                                  val hw = screenshot.hardwareBuffer
+
+                                  val bmp = Bitmap.wrapHardwareBuffer(hw, screenshot.colorSpace)
+
+                                      ?.copy(Bitmap.Config.ARGB_8888, false)
+
+                                  hw.close()
+
+                                  if (bmp != null) {
+
+                                      processScreenAndAct(bmp)
+
+                                      bmp.recycle()
+
+                                  }
+
+                              } catch (_: Throwable) {
+
+                              }
+
+                              handler.postDelayed({ scheduleNextTick() }, 95L)
+
+                          }
+
+
+
+                          override fun onFailure(errorCode: Int) {
+
+                              // 스크린샷 제한 시에도 사용자 지시 방향 패드 이동은 즉시 수행
+
+                              dispatchPadTouch(cmdX, cmdY, 0f, 0f, false)
+
+                              handler.postDelayed({ scheduleNextTick() }, 120L)
+
+                          }
+
+                      }
+
+                  )
+
+              }
+
+
+
+              private fun processScreenAndAct(bmp: Bitmap) {
+
+                  val w = bmp.width
+
+                  val h = bmp.height
+
+                  val step = max(4, w / 160)
+
+                  val gridW = w / step
+
+                  val gridH = h / step
+
+                  val currLuma = IntArray(gridW * gridH)
+
+
+
+                  val playerX = w * 0.5f
+
+                  val playerY = h * 0.54f
+
+
+
+                  var redSumX = 0f
+
+                  var redSumY = 0f
+
+                  var redCnt = 0
+
+
+
+                  var fastSumX = 0f
+
+                  var fastSumY = 0f
+
+                  var fastCnt = 0
+
+
+
+                  val oldLuma = prevLuma
+
+
+
+                  for (gy in 2 until gridH - 2) {
+
+                      val py = gy * step
+
+                      for (gx in 2 until gridW - 2) {
+
+                          val px = gx * step
+
+                          // 왼쪽 위 오버레이 창 영역 제외
+
+                          if (px < 460 && py < 460) continue
+
+
+
+                          val c = bmp.getPixel(px, py)
+
+                          val r = Color.red(c)
+
+                          val g = Color.green(c)
+
+                          val b = Color.blue(c)
+
+                          val luma = (r + g + b) / 3
+
+                          val idx = gy * gridW + gx
+
+                          currLuma[idx] = luma
+
+
+
+                          // 1. 상대 캐릭터 바닥 빨간 원 픽셀 검출
+
+                          if (r > 190 && g < 70 && b < 80 && (r - g) > 120) {
+
+                              redSumX += px
+
+                              redSumY += py
+
+                              redCnt++
+
+                          }
+
+
+
+                          // 2. 내 캐릭터 주변 다가오는 고속 오브젝트(탄환) 감지
+
+                          if (oldLuma != null && oldLuma.size == currLuma.size) {
+
+                              val diff = kotlin.math.abs(luma - oldLuma[idx])
+
+                              if (diff > 65 && luma > 180) {
+
+                                  val distToPlayer = hypot(px - playerX, py - playerY)
+
+                                  if (distToPlayer in 45f..(w * 0.28f)) {
+
+                                      fastSumX += px
+
+                                      fastSumY += py
+
+                                      fastCnt++
+
+                                  }
+
+                              }
+
+                          }
+
+                      }
+
+                  }
+
+                  prevLuma = currLuma
+
+
+
+                  // 고속 오브젝트 수직 회피 벡터 계산
+
+                  var dodgeX = 0f
+
+                  var dodgeY = 0f
+
+                  if (fastCnt >= 3) {
+
+                      val fx = fastSumX / fastCnt
+
+                      val fy = fastSumY / fastCnt
+
+                      val rx = playerX - fx
+
+                      val ry = playerY - fy
+
+                      val d = hypot(rx, ry).coerceAtLeast(1f)
+
+                      // 접근 방향(rx, ry)에 수직인 두 법선 중 상단 스틱 방향(cmdX, cmdY)과 가까운 쪽 선택
+
+                      val n1x = -ry / d
+
+                      val n1y = rx / d
+
+                      val n2x = ry / d
+
+                      val n2y = -rx / d
+
+                      if (n1x * cmdX + n1y * cmdY >= n2x * cmdX + n2y * cmdY) {
+
+                          dodgeX = n1x
+
+                          dodgeY = n1y
+
+                      } else {
+
+                          dodgeX = n2x
+
+                          dodgeY = n2y
+
+                      }
+
+                  }
+
+
+
+                  // 최종 무빙 벡터: 고속탄 위협 시 회피 우선(85%) + 상단 스틱 지시 방향(15%)
+
+                  var finalMoveX = if (fastCnt >= 3) (dodgeX * 0.85f + cmdX * 0.15f) else cmdX
+
+                  var finalMoveY = if (fastCnt >= 3) (dodgeY * 0.85f + cmdY * 0.15f) else cmdY
+
+                  val mNorm = hypot(finalMoveX, finalMoveY)
+
+                  if (mNorm > 1f) {
+
+                      finalMoveX /= mNorm
+
+                      finalMoveY /= mNorm
+
+                  }
+
+
+
+                  // 상대 바닥 빨간 원 기준 수학적 리드샷 에임 계산
+
+                  var aimX = 0f
+
+                  var aimY = 0f
+
+                  var fire = false
+
+                  val nowMs = System.currentTimeMillis()
+
+
+
+                  if (redCnt >= 4) {
+
+                      val ex = redSumX / redCnt
+
+                      val ey = redSumY / redCnt
+
+                      if (prevEnemyX >= 0f) {
+
+                          enemyVelX = enemyVelX * 0.6f + (ex - prevEnemyX) * 0.4f
+
+                          enemyVelY = enemyVelY * 0.6f + (ey - prevEnemyY) * 0.4f
+
+                      }
+
+                      prevEnemyX = ex
+
+                      prevEnemyY = ey
+
+
+
+                      val dx = ex - playerX
+
+                      val dy = ey - playerY
+
+                      val dist = hypot(dx, dy)
+
+                      val bulletSpeedPerTick = w * 0.065f
+
+                      val tLead = (dist / bulletSpeedPerTick).coerceIn(0f, 6f)
+
+                      val targetX = ex + enemyVelX * tLead
+
+                      val targetY = ey + enemyVelY * tLead
+
+                      val ang = atan2(targetY - playerY, targetX - playerX)
+
+                      aimX = cos(ang)
+
+                      aimY = sin(ang)
+
+                      if (nowMs - lastFireMs > 480L && dist < w * 0.46f) {
+
+                          fire = true
+
+                          lastFireMs = nowMs
+
+                      }
+
+                  }
+
+
+
+                  statusText?.text = when {
+
+                      fastCnt >= 3 -> "⚡ 고속탄 감지! 자동 회피 기동"
+
+                      redCnt >= 4 -> "🎯 빨간 원 추적 리드샷 조준 중"
+
+                      else -> "🕹️ 지시 방향 이동 · 화면 감시 중"
+
+                  }
+
+
+
+                  dispatchPadTouch(finalMoveX, finalMoveY, aimX, aimY, fire, w.toFloat(), h.toFloat())
+
+              }
+
+
+
+              private fun dispatchPadTouch(
+
+                  mx: Float, my: Float,
+
+                  ax: Float, ay: Float,
+
+                  fire: Boolean,
+
+                  screenW: Float = 2400f,
+
+                  screenH: Float = 1080f
+
+              ) {
+
+                  if (!aiActive) return
+
+                  val leftPadX = screenW * 0.14f
+
+                  val leftPadY = screenH * 0.78f
+
+                  val rightPadX = screenW * 0.86f
+
+                  val rightPadY = screenH * 0.78f
+
+                  val dragR = screenH * 0.11f
+
+
+
+                  val builder = GestureDescription.Builder()
+
+                  var hasStroke = false
+
+
+
+                  if (hypot(mx, my) > 0.08f) {
+
+                      val movePath = Path().apply {
+
+                          moveTo(leftPadX, leftPadY)
+
+                          lineTo(leftPadX + mx * dragR, leftPadY + my * dragR)
+
+                      }
+
+                      builder.addStroke(GestureDescription.StrokeDescription(movePath, 0L, 85L, false))
+
+                      hasStroke = true
+
+                  }
+
+
+
+                  if (fire && hypot(ax, ay) > 0.1f) {
+
+                      val aimPath = Path().apply {
+
+                          moveTo(rightPadX, rightPadY)
+
+                          lineTo(rightPadX + ax * dragR, rightPadY + ay * dragR)
+
+                      }
+
+                      builder.addStroke(GestureDescription.StrokeDescription(aimPath, 0L, 65L, false))
+
+                      hasStroke = true
+
+                  }
+
+
+
+                  if (hasStroke) {
+
+                      dispatchGesture(builder.build(), null, null)
+
+                  }
+
+              }
+
+          }
+
+          ''')
+
+          print("Android source generated successfully.")
+
+          EOF
+
+
+
+      - name: Setup Gradle
+
+        uses: gradle/actions/setup-gradle@v3
+
+        with:
+
+          gradle-version: '8.5'
+
+
+
+      - name: Build Debug APK
+
+        run: gradle assembleDebug
+
+
+
+      - name: Rename APK for Easy Download
+
+        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay.apk
+
+
+
+      - name: Upload APK to Actions Tab
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: Brawl_AI_Overlay_APK
+
+          path: Brawl_AI_Overlay.apk
+
+
+
+      - name: Publish APK to GitHub Releases
+
+        continue-on-error: true
+
+        env:
+
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        run: |
+
+          gh release delete v1.0 --yes || true
+
+          gh release create v1.0 Brawl_AI_Overlay.apk --title "Brawl AI Overlay 설치파일 (APK)" --notes "아래 Assets에서 Brawl_AI_Overlay.apk를 터치하면 태블릿/폰에 바로 다운로드 및 설치됩니다."
+
