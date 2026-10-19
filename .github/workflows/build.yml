@@ -42,7 +42,7 @@ jobs:
 
 
 
-      - name: Generate Android Overlay Project (Green/Blue/Red Circle + Accel Lead + Small Fast Projectile + Self-Velocity + HP/Ammo Manager)
+      - name: Generate Android Overlay Project v3.1 (Radial Hold-Drag + Ground-Plane Circle Alignment)
 
         run: |
 
@@ -148,9 +148,9 @@ jobs:
 
                   targetSdk = 34
 
-                  versionCode = 2
+                  versionCode = 4
 
-                  versionName = "2.0"
+                  versionName = "3.2"
 
               }
 
@@ -362,7 +362,7 @@ jobs:
 
                   val title = TextView(this).apply {
 
-                      text = "BRAWL AI OVERLAY v2.0"
+                      text = "BRAWL AI OVERLAY v3.2"
 
                       textSize = 22f
 
@@ -376,7 +376,7 @@ jobs:
 
                   val sub = TextView(this).apply {
 
-                      text = "• 초록(내 캐릭터) / 파랑(아군 제외) / 빨강(적) 원 구분\\n• 빨간 원 속도+가속도 2차 궤적 예측 사격\\n• 소형 고속 탄환 직선 궤도 & 내 이동속도 반영 회피\\n• 내 브롤러 머리 위 HP바·탄창(3칸) 인식 자동 체력관리"
+                      text = "• 직선 홀드-드래그(Radial Hold-Drag): 패드를 끝까지 쭉 밀고 유지 후 발사\n• 원터치 방향 고정 스틱 + 자율 카이팅 무빙 (터치 충돌·드래그 끊김 해결)\n• 발밑 원 평면 정렬: 체력바와 발밑 원을 분리해 정확한 적 빨간 원 중심 조준\n• 우측 하단 빨간 공격버튼/UI 마스킹 제외 + 2차 가속도 리드샷 + HP/탄창 관리"
 
                       textSize = 13f
 
@@ -454,7 +454,7 @@ jobs:
 
                               svc.showFloatingWindow()
 
-                              Toast.makeText(context, "왼쪽 위에 오버레이 창이 떴습니다! 브롤스타즈를 켜세요.", Toast.LENGTH_LONG).show()
+                              Toast.makeText(context, "왼쪽 위에 v3.2 오버레이 창이 떴습니다! 브롤스타즈를 켜세요.", Toast.LENGTH_LONG).show()
 
                               finish()
 
@@ -499,6 +499,8 @@ jobs:
           import android.accessibilityservice.GestureDescription
 
           import android.content.Context
+
+          import android.content.res.Resources
 
           import android.graphics.Bitmap
 
@@ -564,15 +566,47 @@ jobs:
 
 
 
-              data class FastBlob(val cx: Float, val cy: Float, val pixelCount: Int)
+              data class ClusterBlob(
 
-              data class TrackedProjectile(val x: Float, val y: Float, val vx: Float, val vy: Float, val speed: Float)
+                  val cx: Float,
+
+                  val cy: Float,
+
+                  val cellCount: Int,
+
+                  val minX: Float,
+
+                  val maxX: Float,
+
+                  val minY: Float,
+
+                  val maxY: Float
+
+              )
+
+
+
+              data class TrackedProjectile(
+
+                  val x: Float,
+
+                  val y: Float,
+
+                  val vx: Float,
+
+                  val vy: Float,
+
+                  val speed: Float
+
+              )
 
 
 
               private var wm: WindowManager? = null
 
               private var rootOverlay: LinearLayout? = null
+
+              private var radarView: View? = null
 
               private var statusText: TextView? = null
 
@@ -584,15 +618,33 @@ jobs:
 
 
 
-              // 사용자 상단 조이스틱 방향 지시 벡터 (-1..1)
+              // 원터치 방향 고정 스틱 (손을 떼도 방향이 유지되어 Android 터치 충돌을 원천 차단; 중앙 탭 시 자율 카이팅 모드)
 
               private var cmdX = 0f
 
               private var cmdY = 0f
 
+              private var userHoldingOverlay = false
 
 
-              // 내 브롤러(초록 원) 실시간 위치 및 이동 속도 벡터 (자신이 움직이는 것 고려)
+
+              // 자율 좌우 무빙(Strafe) 위상
+
+              private var strafeSign = 1f
+
+              private var lastStrafeFlipMs = 0L
+
+
+
+              // 화면 실제 해상도 (가로 모드 기준 자동 갱신)
+
+              private var realScreenW = 2400f
+
+              private var realScreenH = 1080f
+
+
+
+              // 내 브롤러 발밑 초록 원 중심(myFootX, myFootY) 및 이동 속도 벡터
 
               private var myX = -1f
 
@@ -601,10 +653,6 @@ jobs:
               private var myVelX = 0f
 
               private var myVelY = 0f
-
-              private var lastAppliedMoveX = 0f
-
-              private var lastAppliedMoveY = 0f
 
 
 
@@ -616,11 +664,17 @@ jobs:
 
 
 
-              // 상대 브롤러(빨간 원) 위치, 속도(v), 가속도(a) 추적 상태
+              // 가장 가까운 적 브롤러의 발밑 빨간 원 중심 추적 상태
 
-              private var prevEnemyX = -1f
+              private var enemyDetected = false
 
-              private var prevEnemyY = -1f
+              private var targetEnemyX = -1f
+
+              private var targetEnemyY = -1f
+
+              private var predTargetX = -1f
+
+              private var predTargetY = -1f
 
               private var enemyVelX = 0f
 
@@ -630,23 +684,49 @@ jobs:
 
               private var enemyAccY = 0f
 
+              private var lastEnemySeenMs = 0L
+
+
+
+              // 최신 계산된 좌측 무빙 벡터 & 우측 에임 벡터
+
+              private var latestMoveX = 0f
+
+              private var latestMoveY = 0f
+
+              private var latestAimX = 0f
+
+              private var latestAimY = 0f
+
+              private var latestShouldFire = false
+
+
+
+              // 제스처 중복 취소(ACTION_CANCEL) 방지 플래그
+
+              private var gestureBusy = false
+
+              private var lastGestureStartMs = 0L
+
+              private var lastFireMs = 0L
+
 
 
               // 이전 프레임 소형 고속 탄환 블롭 목록 & 밝기 버퍼
 
               private var prevLuma: IntArray? = null
 
-              private var prevBlobs: List<FastBlob> = emptyList()
+              private var prevProjBlobs: List<ClusterBlob> = emptyList()
 
               private var lastFrameTimeMs = 0L
-
-              private var lastFireMs = 0L
 
 
 
               private val handler = Handler(Looper.getMainLooper())
 
-              private var loopRunning = false
+              private var visionLoopRunning = false
+
+              private var padLoopRunning = false
 
 
 
@@ -657,6 +737,8 @@ jobs:
                   instance = this
 
                   wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+                  updateRealScreenSize()
 
                   showFloatingWindow()
 
@@ -670,15 +752,61 @@ jobs:
 
 
 
+              override fun onDestroy() {
+
+                  super.onDestroy()
+
+                  aiActive = false
+
+                  rootOverlay?.let {
+
+                      try { wm?.removeView(it) } catch (_: Throwable) {}
+
+                  }
+
+                  rootOverlay = null
+
+                  if (instance === this) instance = null
+
+              }
+
+
+
+              private fun updateRealScreenSize() {
+
+                  val dm = Resources.getSystem().displayMetrics
+
+                  val w = max(dm.widthPixels, dm.heightPixels).toFloat()
+
+                  val h = min(dm.widthPixels, dm.heightPixels).toFloat()
+
+                  if (w > 400f && h > 300f) {
+
+                      realScreenW = w
+
+                      realScreenH = h
+
+                  }
+
+              }
+
+
+
               fun showFloatingWindow() {
 
-                  if (rootOverlay != null) return
+                  rootOverlay?.let {
+
+                      try { wm?.removeView(it) } catch (_: Throwable) {}
+
+                      rootOverlay = null
+
+                  }
 
 
 
                   val params = WindowManager.LayoutParams(
 
-                      440,
+                      430,
 
                       WindowManager.LayoutParams.WRAP_CONTENT,
 
@@ -692,9 +820,9 @@ jobs:
 
                       gravity = Gravity.TOP or Gravity.START
 
-                      x = 24
+                      x = 20
 
-                      y = 24
+                      y = 20
 
                   }
 
@@ -704,7 +832,7 @@ jobs:
 
                       setColor(Color.parseColor("#E60F172A"))
 
-                      cornerRadius = 38f
+                      cornerRadius = 36f
 
                       setStroke(3, Color.parseColor("#38BDF8"))
 
@@ -718,7 +846,7 @@ jobs:
 
                       background = windowBg
 
-                      setPadding(24, 18, 24, 22)
+                      setPadding(22, 16, 22, 20)
 
                   }
 
@@ -730,7 +858,7 @@ jobs:
 
                       gravity = Gravity.CENTER_VERTICAL
 
-                      setPadding(4, 0, 4, 12)
+                      setPadding(4, 0, 4, 10)
 
                   }
 
@@ -738,9 +866,9 @@ jobs:
 
                   val titleTv = TextView(this).apply {
 
-                      text = "● BRAWL AI v2 (드래그 이동)"
+                      text = "● BRAWL AI v3.2 (상단바 드래그)"
 
-                      textSize = 11.5f
+                      textSize = 11f
 
                       setTextColor(Color.parseColor("#38BDF8"))
 
@@ -786,6 +914,8 @@ jobs:
 
                           MotionEvent.ACTION_DOWN -> {
 
+                              userHoldingOverlay = true
+
                               startX = params.x
 
                               startY = params.y
@@ -805,6 +935,14 @@ jobs:
                               params.y = startY + (ev.rawY - touchY).toInt()
 
                               wm?.updateViewLayout(container, params)
+
+                              true
+
+                          }
+
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+
+                              userHoldingOverlay = false
 
                               true
 
@@ -830,7 +968,7 @@ jobs:
 
                       setColor(Color.parseColor("#10B981"))
 
-                      cornerRadius = 24f
+                      cornerRadius = 22f
 
                   }
 
@@ -838,7 +976,7 @@ jobs:
 
                       setColor(Color.parseColor("#334155"))
 
-                      cornerRadius = 24f
+                      cornerRadius = 22f
 
                   }
 
@@ -848,7 +986,7 @@ jobs:
 
                       text = "직접 조종: OFF (누르면 시작)"
 
-                      textSize = 12f
+                      textSize = 11.5f
 
                       setTextColor(Color.WHITE)
 
@@ -860,13 +998,15 @@ jobs:
 
                           if (aiActive) {
 
+                              updateRealScreenSize()
+
                               text = "● 직접 조종: ON (누르면 멈춤)"
 
                               setTextColor(Color.BLACK)
 
                               background = toggleBgOn
 
-                              startControlLoop()
+                              startEngines()
 
                           } else {
 
@@ -886,13 +1026,17 @@ jobs:
 
 
 
-                  val joystickView = object : View(this) {
+                  // 방향 지시 조이스틱 + 실시간 인식 미니 레이더 통합 뷰
+
+                  // 중요: 스틱을 한번 터치하고 손을 떼도 방향이 유지되므로 Android 터치 충돌 없이 패드를 100% 연속 드래그합니다!
+
+                  val stickAndRadar = object : View(this) {
 
                       private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
 
                           style = Paint.Style.STROKE
 
-                          strokeWidth = 5f
+                          strokeWidth = 4.5f
 
                           color = Color.parseColor("#38BDF8")
 
@@ -914,13 +1058,39 @@ jobs:
 
                       }
 
-                      private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+                      private val moveVecPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
 
                           style = Paint.Style.STROKE
 
                           strokeWidth = 6f
 
-                          color = Color.parseColor("#38BDF8")
+                          color = Color.parseColor("#34D399")
+
+                      }
+
+                      private val aimVecPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.STROKE
+
+                          strokeWidth = 5f
+
+                          color = Color.parseColor("#F43F5E")
+
+                      }
+
+                      private val enemyDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.FILL
+
+                          color = Color.parseColor("#EF4444")
+
+                      }
+
+                      private val leadDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+
+                          style = Paint.Style.FILL
+
+                          color = Color.parseColor("#FBBF24")
 
                       }
 
@@ -934,19 +1104,49 @@ jobs:
 
                           val cy = height / 2f
 
-                          val r = min(cx, cy) - 14f
+                          val r = min(cx, cy) - 12f
 
                           canvas.drawCircle(cx, cy, r, bgPaint)
 
                           canvas.drawCircle(cx, cy, r, ringPaint)
 
-                          val kx = cx + cmdX * (r - 22f)
 
-                          val ky = cy + cmdY * (r - 22f)
 
-                          canvas.drawLine(cx, cy, kx, ky, linePaint)
+                          // AI가 실제로 드래그 중인 무빙 방향(초록선) & 조준 방향(빨간선) 실시간 표시
 
-                          canvas.drawCircle(kx, ky, 22f, knobPaint)
+                          if (aiActive) {
+
+                              canvas.drawLine(cx, cy, cx + latestMoveX * (r - 14f), cy + latestMoveY * (r - 14f), moveVecPaint)
+
+                              if (enemyDetected) {
+
+                                  canvas.drawLine(cx, cy, cx + latestAimX * (r - 10f), cy + latestAimY * (r - 10f), aimVecPaint)
+
+                                  val relEx = ((targetEnemyX - myX) / (realScreenW * 0.45f)).coerceIn(-1f, 1f)
+
+                                  val relEy = ((targetEnemyY - myY) / (realScreenH * 0.45f)).coerceIn(-1f, 1f)
+
+                                  canvas.drawCircle(cx + relEx * (r - 16f), cy + relEy * (r - 16f), 9f, enemyDotPaint)
+
+
+
+                                  val relPx = ((predTargetX - myX) / (realScreenW * 0.45f)).coerceIn(-1f, 1f)
+
+                                  val relPy = ((predTargetY - myY) / (realScreenH * 0.45f)).coerceIn(-1f, 1f)
+
+                                  canvas.drawCircle(cx + relPx * (r - 16f), cy + relPy * (r - 16f), 6f, leadDotPaint)
+
+                              }
+
+                          }
+
+
+
+                          val kx = cx + cmdX * (r - 20f)
+
+                          val ky = cy + cmdY * (r - 20f)
+
+                          canvas.drawCircle(kx, ky, 18f, knobPaint)
 
                       }
 
@@ -958,11 +1158,11 @@ jobs:
 
                           val cy = height / 2f
 
-                          val maxR = min(cx, cy) - 18f
-
                           when (event.action) {
 
                               MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+
+                                  userHoldingOverlay = true
 
                                   val dx = event.x - cx
 
@@ -970,7 +1170,7 @@ jobs:
 
                                   val d = hypot(dx, dy)
 
-                                  if (d < 6f) {
+                                  if (d < 22f) {
 
                                       cmdX = 0f
 
@@ -978,11 +1178,9 @@ jobs:
 
                                   } else {
 
-                                      val scale = min(d, maxR) / maxR
+                                      cmdX = dx / d
 
-                                      cmdX = (dx / d) * scale
-
-                                      cmdY = (dy / d) * scale
+                                      cmdY = dy / d
 
                                   }
 
@@ -992,9 +1190,7 @@ jobs:
 
                               MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
 
-                                  cmdX = 0f
-
-                                  cmdY = 0f
+                                  userHoldingOverlay = false
 
                                   invalidate()
 
@@ -1008,13 +1204,41 @@ jobs:
 
                   }.apply {
 
-                      layoutParams = LinearLayout.LayoutParams(210, 210).apply {
+                      layoutParams = LinearLayout.LayoutParams(200, 200).apply {
 
                           gravity = Gravity.CENTER_HORIZONTAL
 
-                          topMargin = 14
+                          topMargin = 10
 
-                          bottomMargin = 10
+                          bottomMargin = 8
+
+                      }
+
+                  }
+
+                  radarView = stickAndRadar
+
+
+
+                  val btnAutoMove = Button(this).apply {
+
+                      text = "중앙 리셋 (AI 자율 카이팅 무빙)"
+
+                      textSize = 10f
+
+                      setPadding(6, 4, 6, 4)
+
+                      setBackgroundColor(Color.parseColor("#1E293B"))
+
+                      setTextColor(Color.parseColor("#38BDF8"))
+
+                      setOnClickListener {
+
+                          cmdX = 0f
+
+                          cmdY = 0f
+
+                          radarView?.invalidate()
 
                       }
 
@@ -1024,13 +1248,15 @@ jobs:
 
                   val hpTv = TextView(this).apply {
 
-                      text = "내 HP: 100% | 탄창: 3.0칸"
+                      text = "HP: 100% | 탄창: 3.0칸"
 
                       textSize = 10.5f
 
                       gravity = Gravity.CENTER
 
                       setTextColor(Color.parseColor("#34D399"))
+
+                      setPadding(0, 6, 0, 2)
 
                   }
 
@@ -1040,9 +1266,9 @@ jobs:
 
                   val stTv = TextView(this).apply {
 
-                      text = "초록(나)·빨강(적 가속도)·소형탄환 감시"
+                      text = "초록선:무빙드래그 / 빨간선:에임조준"
 
-                      textSize = 10f
+                      textSize = 9.5f
 
                       gravity = Gravity.CENTER
 
@@ -1068,7 +1294,9 @@ jobs:
 
                   body.addView(btnToggle)
 
-                  body.addView(joystickView)
+                  body.addView(stickAndRadar)
+
+                  body.addView(btnAutoMove)
 
                   body.addView(hpTv)
 
@@ -1090,25 +1318,37 @@ jobs:
 
 
 
-              private fun startControlLoop() {
-
-                  if (loopRunning) return
-
-                  loopRunning = true
+              private fun startEngines() {
 
                   lastFrameTimeMs = System.currentTimeMillis()
 
-                  scheduleNextTick()
+                  if (!visionLoopRunning) {
+
+                      visionLoopRunning = true
+
+                      scheduleVisionCapture()
+
+                  }
+
+                  if (!padLoopRunning) {
+
+                      padLoopRunning = true
+
+                      schedulePadDragLoop()
+
+                  }
 
               }
 
 
 
-              private fun scheduleNextTick() {
+              // 1) 화면 인식 루프 (안드로이드 스크린샷 API 쿨타임을 준수하며 초록/파랑/빨강 원 및 탄환 스캔)
+
+              private fun scheduleVisionCapture() {
 
                   if (!aiActive) {
 
-                      loopRunning = false
+                      visionLoopRunning = false
 
                       return
 
@@ -1146,7 +1386,7 @@ jobs:
 
                               }
 
-                              handler.postDelayed({ scheduleNextTick() }, 85L)
+                              handler.postDelayed({ scheduleVisionCapture() }, 230L)
 
                           }
 
@@ -1154,9 +1394,9 @@ jobs:
 
                           override fun onFailure(errorCode: Int) {
 
-                              dispatchPadTouch(cmdX, cmdY, 0f, 0f, false)
+                              extrapolateBetweenFrames(0.13f)
 
-                              handler.postDelayed({ scheduleNextTick() }, 110L)
+                              handler.postDelayed({ scheduleVisionCapture() }, 150L)
 
                           }
 
@@ -1168,11 +1408,127 @@ jobs:
 
 
 
+              // 2) 패드 홀드-드래그 주입 루프 (스크린샷 주기와 독립적으로 패드를 끊김 없이 쭉 밀어줌)
+
+              private fun schedulePadDragLoop() {
+
+                  if (!aiActive) {
+
+                      padLoopRunning = false
+
+                      return
+
+                  }
+
+                  val now = System.currentTimeMillis()
+
+                  if (gestureBusy && (now - lastGestureStartMs) > 420L) {
+
+                      gestureBusy = false
+
+                  }
+
+
+
+                  if (!userHoldingOverlay && !gestureBusy) {
+
+                      var mx = latestMoveX
+
+                      var my = latestMoveY
+
+                      if (hypot(mx, my) < 0.15f) {
+
+                          if (now - lastStrafeFlipMs > 950L) {
+
+                              strafeSign = -strafeSign
+
+                              lastStrafeFlipMs = now
+
+                          }
+
+                          mx = if (cmdX != 0f || cmdY != 0f) cmdX else (0.78f * strafeSign)
+
+                          my = if (cmdX != 0f || cmdY != 0f) cmdY else (0.32f * strafeSign)
+
+                          val len = hypot(mx, my).coerceAtLeast(1f)
+
+                          mx /= len
+
+                          my /= len
+
+                          latestMoveX = mx
+
+                          latestMoveY = my
+
+                      }
+
+
+
+                      val canFireNow = latestShouldFire && enemyDetected &&
+
+                          (now - lastEnemySeenMs) < 900L && (now - lastFireMs) > 500L
+
+
+
+                      dispatchHoldDragPadGesture(
+
+                          mx, my,
+
+                          latestAimX, latestAimY,
+
+                          canFireNow
+
+                      )
+
+                      if (canFireNow) {
+
+                          lastFireMs = now
+
+                      }
+
+                      radarView?.invalidate()
+
+                  }
+
+
+
+                  handler.postDelayed({ schedulePadDragLoop() }, 55L)
+
+              }
+
+
+
+              private fun extrapolateBetweenFrames(dt: Float) {
+
+                  if (!enemyDetected || targetEnemyX < 0f) return
+
+                  val now = System.currentTimeMillis()
+
+                  if (now - lastEnemySeenMs > 900L) {
+
+                      enemyDetected = false
+
+                      latestShouldFire = false
+
+                      return
+
+                  }
+
+                  targetEnemyX = (targetEnemyX + enemyVelX * dt).coerceIn(realScreenW * 0.1f, realScreenW * 0.9f)
+
+                  targetEnemyY = (targetEnemyY + enemyVelY * dt).coerceIn(realScreenH * 0.1f, realScreenH * 0.9f)
+
+                  updateAimAndMoveVectors()
+
+              }
+
+
+
               private fun processScreenFrame(bmp: Bitmap) {
 
                   val nowMs = System.currentTimeMillis()
 
-                  val dt = ((nowMs - lastFrameTimeMs).coerceIn(40L, 250L)) / 1000f
+                  val dt = ((nowMs - lastFrameTimeMs).coerceIn(80L, 450L)) / 1000f
 
                   lastFrameTimeMs = nowMs
 
@@ -1182,7 +1538,13 @@ jobs:
 
                   val h = bmp.height
 
-                  val step = max(4, w / 180)
+                  realScreenW = w.toFloat()
+
+                  realScreenH = h.toFloat()
+
+
+
+                  val step = max(4, w / 160)
 
                   val gridW = w / step
 
@@ -1190,25 +1552,13 @@ jobs:
 
                   val currLuma = IntArray(gridW * gridH)
 
+                  val greenMask = BooleanArray(gridW * gridH)
+
+                  val blueMask = BooleanArray(gridW * gridH)
+
+                  val redMask = BooleanArray(gridW * gridH)
+
                   val fastMask = BooleanArray(gridW * gridH)
-
-
-
-                  // 1. 초록 원(내 브롤러), 파랑 원(아군 제외), 빨간 원(적 브롤러) 분리 검출
-
-                  var greenSumX = 0f
-
-                  var greenSumY = 0f
-
-                  var greenCnt = 0
-
-
-
-                  var redSumX = 0f
-
-                  var redSumY = 0f
-
-                  var redCnt = 0
 
 
 
@@ -1216,21 +1566,33 @@ jobs:
 
 
 
-                  for (gy in 3 until gridH - 3) {
+                  for (gy in 2 until gridH - 2) {
 
                       val py = gy * step
 
-                      for (gx in 3 until gridW - 3) {
+                      for (gx in 2 until gridW - 2) {
 
                           val px = gx * step
 
-                          // 왼쪽 위 오버레이 창 영역 제외
 
-                          if (px < 460 && py < 460) continue
 
-                          // 하단 조이스틱 영역 제외
+                          // [UI 및 패드 영역 철저히 마스킹 제외]
 
-                          if (py > h * 0.72f && (px < w * 0.25f || px > w * 0.75f)) continue
+                          // 1) 상단 스코어/시간 UI 제외
+
+                          if (py < h * 0.12f) continue
+
+                          // 2) 좌측 상단 오버레이 창 제외
+
+                          if (px < w * 0.28f && py < h * 0.56f) continue
+
+                          // 3) 좌측 하단 무빙 패드 영역 제외
+
+                          if (px < w * 0.30f && py > h * 0.52f) continue
+
+                          // 4) 우측 하단 빨간 공격 조이스틱 / 궁극기 / 가젯 버튼 영역 완벽 제외!
+
+                          if (px > w * 0.65f && py > h * 0.44f) continue
 
 
 
@@ -1250,19 +1612,15 @@ jobs:
 
 
 
-                          // (A) 내 브롤러 아래 초록 원 감지 (화면 중앙 부근의 밝은 초록 링: G가 높고 R,B보다 뚜렷이 큼)
+                          // (A) 내 브롤러 초록색(발밑 초록 원 & 머리 위 초록 HP바) 후보
 
-                          if (px in (w * 0.32f).toInt()..(w * 0.68f).toInt() &&
+                          if (px in (w * 0.35f).toInt()..(w * 0.65f).toInt() &&
 
-                              py in (h * 0.30f).toInt()..(h * 0.75f).toInt()) {
+                              py in (h * 0.28f).toInt()..(h * 0.68f).toInt()) {
 
-                              if (g > 185 && r < 110 && b < 130 && (g - r) > 80) {
+                              if (g > 170 && r < 115 && b < 135 && (g - r) > 65 && (g - b) > 45) {
 
-                                  greenSumX += px
-
-                                  greenSumY += py
-
-                                  greenCnt++
+                                  greenMask[idx] = true
 
                               }
 
@@ -1270,33 +1628,33 @@ jobs:
 
 
 
-                          // (B) 파랑/하늘색 원(아군 Oschapi-man, YT Kuni 등)은 B>180, G>140, R<90 -> 조준에서 철저히 제외!
+                          // (B) 아군/분신 파랑·하늘색 원 감지 (타겟 제외용)
 
-                          val isBlueAllyCircle = (b > 175 && g > 120 && r < 95)
+                          if (b > 170 && g > 115 && r < 100 && (b - r) > 80) {
 
-
-
-                          // (C) 적 브롤러 아래 빨간 원 감지 (R이 매우 높고 G, B가 낮음)
-
-                          if (!isBlueAllyCircle && r > 195 && g < 72 && b < 85 && (r - g) > 125) {
-
-                              redSumX += px
-
-                              redSumY += py
-
-                              redCnt++
+                              blueMask[idx] = true
 
                           }
 
 
 
-                          // (D) 프레임 간 급격히 움직이는 고휘도 픽셀(탄환 후보) 마스킹
+                          // (C) 적 브롤러 빨간 원 / 빨간 체력바 감지
+
+                          if (r > 185 && g < 78 && b < 90 && (r - g) > 115 && (r - b) > 100) {
+
+                              redMask[idx] = true
+
+                          }
+
+
+
+                          // (D) 프레임 간 급격히 움직이는 고휘도 탄환 픽셀
 
                           if (oldLuma != null && oldLuma.size == currLuma.size) {
 
                               val diff = abs(luma - oldLuma[idx])
 
-                              if (diff > 58 && (r > 190 || g > 190 || b > 190)) {
+                              if (diff > 60 && (r > 195 || g > 195 || b > 195)) {
 
                                   fastMask[idx] = true
 
@@ -1312,225 +1670,507 @@ jobs:
 
 
 
-                  // 내 브롤러(초록 원) 중심 좌표 및 내 이동 속도(myVelX, myVelY) 갱신
+                  // 1. [발밑 초록 원 평면 정렬]
 
-                  val detectedMyX = if (greenCnt >= 4) (greenSumX / greenCnt) else (w * 0.5f)
+                  // 내 브롤러의 초록 HP바(머리 위)와 발밑 초록 원을 구분하여 내 발밑 중심(myX, myY)을 정확히 산출!
 
-                  val detectedMyY = if (greenCnt >= 4) (greenSumY / greenCnt) else (h * 0.54f)
+                  val greenClusters = extractClusters(greenMask, gridW, gridH, step, 2, 120)
+
+                  var detectedFootX = w * 0.50f
+
+                  var detectedFootY = h * 0.535f
+
+                  var hpBarFound = false
 
 
 
-                  // 내가 패드로 이동 중인 속도 벡터 반영 (카메라 이동 + 내 브롤러 실제 이동 속도)
+                  for (gc in greenClusters) {
 
-                  val myMaxSpeedPx = w * 0.19f
+                      // 해당 초록 클러스터 바로 아래(0.015h ~ 0.032h)에 주황색 3칸 탄창 바가 있는지 확인
+
+                      if (hasOrangeAmmoUnderneath(bmp, gc.cx, gc.maxY, w, h)) {
+
+                          // 이 클러스터는 100% 내 브롤러 머리 위 초록 HP바!
+
+                          scanMyHpAndAmmoFromBar(bmp, gc.cx, gc.cy, w, h)
+
+                          // 내 발밑 초록 원 중심은 머리 위 HP바에서 정확히 아래로 0.108 * h 지점!
+
+                          detectedFootX = gc.cx.coerceIn(w * 0.40f, w * 0.60f)
+
+                          detectedFootY = (gc.cy + h * 0.108f).coerceIn(h * 0.44f, h * 0.62f)
+
+                          hpBarFound = true
+
+                          break
+
+                      }
+
+                  }
+
+
+
+                  if (!hpBarFound) {
+
+                      // 발밑 초록 원 클러스터(화면 중앙 하단부) 직접 탐색
+
+                      val footGreen = greenClusters.filter { it.cy in (h * 0.46f)..(h * 0.64f) }
+
+                          .minByOrNull { hypot(it.cx - w * 0.50f, it.cy - h * 0.54f) }
+
+                      if (footGreen != null) {
+
+                          detectedFootX = footGreen.cx
+
+                          detectedFootY = footGreen.cy
+
+                      }
+
+                      scanMyHpAndAmmoFromBar(bmp, detectedFootX, detectedFootY - h * 0.108f, w, h)
+
+                  }
+
+
+
+                  val myMaxSpeedPx = w * 0.18f
 
                   if (myX >= 0f) {
 
-                      val screenShiftVx = (detectedMyX - myX) / dt
+                      val padVx = latestMoveX * myMaxSpeedPx
 
-                      val screenShiftVy = (detectedMyY - myY) / dt
+                      val padVy = latestMoveY * myMaxSpeedPx
 
-                      val padVx = lastAppliedMoveX * myMaxSpeedPx
+                      myVelX = 0.5f * myVelX + 0.5f * padVx
 
-                      val padVy = lastAppliedMoveY * myMaxSpeedPx
-
-                      myVelX = 0.5f * myVelX + 0.5f * (padVx + screenShiftVx * 0.3f)
-
-                      myVelY = 0.5f * myVelY + 0.5f * (padVy + screenShiftVy * 0.3f)
+                      myVelY = 0.5f * myVelY + 0.5f * padVy
 
                   }
 
-                  myX = detectedMyX
+                  myX = detectedFootX
 
-                  myY = detectedMyY
-
-
-
-                  // 2. 내 브롤러(초록 원) 머리 위의 HP 바 및 주황색 3칸 탄창 바 인식
-
-                  scanMyHpAndAmmoBars(bmp, myX, myY, w, h)
+                  myY = detectedFootY
 
 
 
-                  // 3. 소형 고속 객체(탄환) 클러스터링: 크기가 작은 것만 탄환으로 인식하고 큰 캐릭터/이펙트는 제외
+                  // 2. 아군 파란 원 클러스터 추출
 
-                  val currBlobs = extractSmallProjectileBlobs(fastMask, gridW, gridH, step)
-
-                  val projectiles = matchAndTrackProjectiles(currBlobs, prevBlobs, dt, w)
-
-                  prevBlobs = currBlobs
+                  val blueClusters = extractClusters(blueMask, gridW, gridH, step, 3, 120)
 
 
 
-                  // 4. 내 이동 속도(myVel)까지 고려한 직선 궤도 예측 및 최적 회피 벡터 계산
+                  // 3. [적 발밑 빨간 원 평면 정렬 & 개별 클러스터 락온]
+
+                  // 적의 머리 위 빨간 HP바와 발밑 빨간 원을 수직 그룹핑하여 항상 '발밑 빨간 원 중심'으로 조준점을 통일!
+
+                  val rawRedClusters = extractClusters(redMask, gridW, gridH, step, 3, 150)
+
+                      .filter { rc ->
+
+                          val notBlue = blueClusters.none { bc -> hypot(rc.cx - bc.cx, rc.cy - bc.cy) < w * 0.055f }
+
+                          val distMe = hypot(rc.cx - myX, rc.cy - myY)
+
+                          notBlue && distMe > w * 0.045f && distMe < w * 0.48f
+
+                      }
+
+
+
+                  val enemyFootPositions = resolveEnemyFootCircles(rawRedClusters, w, h)
+
+
+
+                  val lockedFoot = if (enemyDetected && targetEnemyX >= 0f) {
+
+                      enemyFootPositions.minByOrNull { pt ->
+
+                          val distPrev = hypot(pt.first - targetEnemyX, pt.second - targetEnemyY)
+
+                          val distMe = hypot(pt.first - myX, pt.second - myY)
+
+                          distPrev * 0.65f + distMe * 0.35f
+
+                      }
+
+                  } else {
+
+                      enemyFootPositions.minByOrNull { pt -> hypot(pt.first - myX, pt.second - myY) }
+
+                  }
+
+
+
+                  if (lockedFoot != null) {
+
+                      val ex = lockedFoot.first
+
+                      val ey = lockedFoot.second
+
+
+
+                      if (enemyDetected && targetEnemyX >= 0f) {
+
+                          val jumpDist = hypot(ex - targetEnemyX, ey - targetEnemyY)
+
+                          if (jumpDist < w * 0.20f) {
+
+                              val rawVx = ((ex - targetEnemyX) / dt + myVelX * 0.2f).coerceIn(-w * 0.25f, w * 0.25f)
+
+                              val rawVy = ((ey - targetEnemyY) / dt + myVelY * 0.2f).coerceIn(-h * 0.25f, h * 0.25f)
+
+                              val newVx = enemyVelX * 0.62f + rawVx * 0.38f
+
+                              val newVy = enemyVelY * 0.62f + rawVy * 0.38f
+
+
+
+                              val rawAx = ((newVx - enemyVelX) / dt).coerceIn(-w * 0.30f, w * 0.30f)
+
+                              val rawAy = ((newVy - enemyVelY) / dt).coerceIn(-h * 0.30f, h * 0.30f)
+
+                              enemyAccX = enemyAccX * 0.72f + rawAx * 0.28f
+
+                              enemyAccY = enemyAccY * 0.72f + rawAy * 0.28f
+
+
+
+                              enemyVelX = newVx
+
+                              enemyVelY = newVy
+
+                          } else {
+
+                              enemyVelX = 0f
+
+                              enemyVelY = 0f
+
+                              enemyAccX = 0f
+
+                              enemyAccY = 0f
+
+                          }
+
+                      }
+
+                      targetEnemyX = ex
+
+                      targetEnemyY = ey
+
+                      enemyDetected = true
+
+                      lastEnemySeenMs = nowMs
+
+                  } else if (nowMs - lastEnemySeenMs > 850L) {
+
+                      enemyDetected = false
+
+                  }
+
+
+
+                  // 4. 소형 고속 탄환 클러스터 추출 및 직선 궤도 회피 계산
+
+                  val currProjBlobs = extractClusters(fastMask, gridW, gridH, step, 2, 20)
+
+                  val projectiles = matchAndTrackProjectiles(currProjBlobs, prevProjBlobs, dt, w)
+
+                  prevProjBlobs = currProjBlobs
+
+
 
                   val dodgePair = computeRelativeTrajectoryDodge(projectiles, myX, myY, myVelX, myVelY, myMaxSpeedPx, w)
 
-                  val dodgeX = dodgePair.first
+                  updateAimAndMoveVectors(dodgePair.first, dodgePair.second)
 
-                  val dodgeY = dodgePair.second
-
-                  val underThreat = hypot(dodgeX, dodgeY) > 0.05f
+              }
 
 
 
-                  // 5. 빨간 원(적)의 위치 + 속도(v) + 가속도(a) 분석 및 내 이동 보정 2차 리드샷 계산
+              // 적의 빨간 클러스터들을 분석해 머리 위 빨간 체력바가 아닌 '발밑 빨간 원 중심(Foot Circle)' 좌표 리스트로 변환
 
-                  var aimX = 0f
+              private fun resolveEnemyFootCircles(
 
-                  var aimY = 0f
+                  redClusters: List<ClusterBlob>,
 
-                  var shouldFire = false
+                  w: Int,
+
+                  h: Int
+
+              ): List<Pair<Float, Float>> {
+
+                  if (redClusters.isEmpty()) return emptyList()
+
+                  val used = BooleanArray(redClusters.size)
+
+                  val footPoints = mutableListOf<Pair<Float, Float>>()
+
+
+
+                  for (i in redClusters.indices) {
+
+                      if (used[i]) continue
+
+                      used[i] = true
+
+                      val c1 = redClusters[i]
+
+                      var groupMinYCluster = c1
+
+                      var groupMaxYCluster = c1
+
+
+
+                      // 같은 X열(±0.05w) 및 브롤러 키 범위(±0.16h) 내에 있는 빨간 클러스터(체력바 + 발밑 빨간 원) 묶기
+
+                      for (j in redClusters.indices) {
+
+                          if (used[j]) continue
+
+                          val c2 = redClusters[j]
+
+                          if (abs(c1.cx - c2.cx) < w * 0.055f && abs(c1.cy - c2.cy) < h * 0.16f) {
+
+                              used[j] = true
+
+                              if (c2.cy < groupMinYCluster.cy) groupMinYCluster = c2
+
+                              if (c2.cy > groupMaxYCluster.cy) groupMaxYCluster = c2
+
+                          }
+
+                      }
+
+
+
+                      if (groupMaxYCluster !== groupMinYCluster &&
+
+                          (groupMaxYCluster.cy - groupMinYCluster.cy) > h * 0.045f) {
+
+                          // 위쪽은 체력바, 아래쪽(groupMaxYCluster)은 발밑 빨간 원!
+
+                          footPoints.add(Pair(groupMaxYCluster.cx, groupMaxYCluster.cy))
+
+                      } else {
+
+                          // 단일 클러스터만 잡힌 경우: 납작한 막대(높이가 좁음)면 체력바이므로 +0.105h 내려서 발밑 원 위치로 보정!
+
+                          val clusterHeight = c1.maxY - c1.minY
+
+                          val clusterWidth = c1.maxX - c1.minX
+
+                          if (clusterHeight < h * 0.026f && clusterWidth > clusterHeight * 1.4f) {
+
+                              footPoints.add(Pair(c1.cx, (c1.cy + h * 0.105f).coerceAtMost(h * 0.90f)))
+
+                          } else {
+
+                              footPoints.add(Pair(c1.cx, c1.cy))
+
+                          }
+
+                      }
+
+                  }
+
+                  return footPoints
+
+              }
+
+
+
+              private fun hasOrangeAmmoUnderneath(bmp: Bitmap, cx: Float, barBottomY: Float, w: Int, h: Int): Boolean {
+
+                  val ammoY = (barBottomY + h * 0.016f).toInt().coerceIn(10, h - 15)
+
+                  val halfW = (w * 0.025f).toInt().coerceAtLeast(16)
+
+                  val startX = (cx - halfW).toInt().coerceIn(10, w - 20)
+
+                  val endX = (cx + halfW).toInt().coerceIn(startX + 1, w - 10)
+
+                  var orangeCnt = 0
+
+                  var x = startX
+
+                  while (x <= endX) {
+
+                      val c = bmp.getPixel(x, ammoY)
+
+                      val r = Color.red(c)
+
+                      val g = Color.green(c)
+
+                      val b = Color.blue(c)
+
+                      if (r > 195 && g in 80..220 && b < 88) {
+
+                          orangeCnt++
+
+                      }
+
+                      x += 4
+
+                  }
+
+                  return orangeCnt >= 2
+
+              }
+
+
+
+              private fun updateAimAndMoveVectors(dodgeX: Float = 0f, dodgeY: Float = 0f) {
+
+                  val underThreat = hypot(dodgeX, dodgeY) > 0.08f
+
+                  val nowMs = System.currentTimeMillis()
+
+
 
                   var enemyDist = 9999f
 
+                  if (enemyDetected && targetEnemyX >= 0f) {
 
+                      enemyDist = hypot(targetEnemyX - myX, targetEnemyY - myY)
 
-                  if (redCnt >= 4) {
+                      val bulletSpeedPx = realScreenW * 0.60f
 
-                      val ex = redSumX / redCnt
-
-                      val ey = redSumY / redCnt
-
-                      enemyDist = hypot(ex - myX, ey - myY)
-
-
-
-                      if (prevEnemyX >= 0f) {
-
-                          // 내가 움직여서 발생한 화면 상대 속도를 보정하여 적의 실제 속도 및 가속도 산출
-
-                          val rawVx = (ex - prevEnemyX) / dt + myVelX * 0.35f
-
-                          val rawVy = (ey - prevEnemyY) / dt + myVelY * 0.35f
-
-                          val newVx = enemyVelX * 0.55f + rawVx * 0.45f
-
-                          val newVy = enemyVelY * 0.55f + rawVy * 0.45f
+                      val tHit = (enemyDist / bulletSpeedPx).coerceIn(0f, 0.50f)
 
 
 
-                          // 이동 가속도 a = (v_new - v_old) / dt (급격한 노이즈 제한)
+                      var leadDx = enemyVelX * tHit + 0.5f * enemyAccX * tHit * tHit
 
-                          val rawAx = ((newVx - enemyVelX) / dt).coerceIn(-w * 0.8f, w * 0.8f)
-
-                          val rawAy = ((newVy - enemyVelY) / dt).coerceIn(-h * 0.8f, h * 0.8f)
-
-                          enemyAccX = enemyAccX * 0.6f + rawAx * 0.4f
-
-                          enemyAccY = enemyAccY * 0.6f + rawAy * 0.4f
+                      var leadDy = enemyVelY * tHit + 0.5f * enemyAccY * tHit * tHit
 
 
 
-                          enemyVelX = newVx
+                      // 리드샷 예측 폭이 적 거리의 30%를 넘지 않도록 제한 (조준선이 엉뚱한 곳으로 튀는 현상 방지)
 
-                          enemyVelY = newVy
+                      val maxLeadOffset = (enemyDist * 0.30f).coerceAtMost(realScreenW * 0.10f)
+
+                      val leadLen = hypot(leadDx, leadDy)
+
+                      if (leadLen > maxLeadOffset && leadLen > 1f) {
+
+                          leadDx = (leadDx / leadLen) * maxLeadOffset
+
+                          leadDy = (leadDy / leadLen) * maxLeadOffset
 
                       }
 
-                      prevEnemyX = ex
-
-                      prevEnemyY = ey
 
 
+                      predTargetX = targetEnemyX + leadDx
 
-                      // 탄착 예상 시간 tHit 계산 후 등가속도 궤적 방정식 P_pred = P_e + v_e*t + 0.5*a_e*t^2 적용
-
-                      val bulletSpeedPx = w * 0.62f
-
-                      val tHit = (enemyDist / bulletSpeedPx).coerceIn(0f, 0.85f)
-
-                      val predX = ex + enemyVelX * tHit + 0.5f * enemyAccX * tHit * tHit
-
-                      val predY = ey + enemyVelY * tHit + 0.5f * enemyAccY * tHit * tHit
+                      predTargetY = targetEnemyY + leadDy
 
 
 
-                      val aimAng = atan2(predY - myY, predX - myX)
+                      // 내 발밑 초록 원(myX, myY)에서 적 발밑 빨간 원 예측점(predTargetX, predTargetY)으로 정확한 조준 각도 산출
 
-                      aimX = cos(aimAng)
+                      val aimAng = atan2(predTargetY - myY, predTargetX - myX)
 
-                      aimY = sin(aimAng)
+                      latestAimX = cos(aimAng)
 
-
-
-                      // HP 관리 & 탄창 관리 수칙 적용:
-
-                      // - 내 HP가 40% 미만이면 공격을 멈춰 브롤스타즈 자연 회복(3초 비전투 치유)을 유도! (단, 초근접 위기 제외)
-
-                      // - 탄창이 1.0칸 이상 있을 때만 발사하며, 탄창이 1칸뿐일 때는 가속도가 낮은 확실한 타이밍에만 사격
-
-                      val lowHpRetreat = myHpRatio < 0.40f && enemyDist > w * 0.18f
-
-                      val enoughAmmo = myAmmoBars >= 0.95f
-
-                      val highConfidenceShot = myAmmoBars >= 1.8f || hypot(enemyAccX, enemyAccY) < w * 0.35f
+                      latestAimY = sin(aimAng)
 
 
 
-                      if (!lowHpRetreat && enoughAmmo && highConfidenceShot &&
+                      val lowHpHoldFire = myHpRatio < 0.38f && enemyDist > realScreenW * 0.16f
 
-                          enemyDist < w * 0.46f && (nowMs - lastFireMs) > 460L) {
+                      val hasAmmo = myAmmoBars >= 0.85f
 
-                          shouldFire = true
+                      latestShouldFire = !lowHpHoldFire && hasAmmo && enemyDist < realScreenW * 0.46f
 
-                          lastFireMs = nowMs
+                  } else {
+
+                      latestShouldFire = false
+
+                  }
+
+
+
+                  if (nowMs - lastStrafeFlipMs > 950L) {
+
+                      strafeSign = -strafeSign
+
+                      lastStrafeFlipMs = nowMs
+
+                  }
+
+
+
+                  var baseMoveX = cmdX
+
+                  var baseMoveY = cmdY
+
+
+
+                  if (enemyDetected && enemyDist in 10f..(realScreenW * 0.48f)) {
+
+                      val toEnemyUx = (targetEnemyX - myX) / enemyDist
+
+                      val toEnemyUy = (targetEnemyY - myY) / enemyDist
+
+                      val perpUx = -toEnemyUy * strafeSign
+
+                      val perpUy = toEnemyUx * strafeSign
+
+
+
+                      if (myHpRatio < 0.40f) {
+
+                          baseMoveX = -toEnemyUx * 0.75f + perpUx * 0.45f
+
+                          baseMoveY = -toEnemyUy * 0.75f + perpUy * 0.45f
+
+                      } else if (hypot(cmdX, cmdY) < 0.15f) {
+
+                          val idealDist = realScreenW * 0.25f
+
+                          val radialFactor = ((enemyDist - idealDist) / (realScreenW * 0.15f)).coerceIn(-0.85f, 0.85f)
+
+                          baseMoveX = toEnemyUx * radialFactor * 0.65f + perpUx * 0.75f
+
+                          baseMoveY = toEnemyUy * radialFactor * 0.65f + perpUy * 0.75f
 
                       }
 
-                  }
+                  } else if (hypot(baseMoveX, baseMoveY) < 0.15f) {
 
+                      baseMoveX = 0.82f * strafeSign
 
-
-                  // 6. HP 관리 및 탄창 상태에 따른 최종 무빙 벡터 결합
-
-                  var tacticalX = cmdX
-
-                  var tacticalY = cmdY
-
-                  if (myHpRatio < 0.42f && redCnt >= 4 && enemyDist > 10f) {
-
-                      // 체력이 낮을 때 적(빨간 원) 반대 방향으로 후퇴 벡터 추가 (HP 회복 관리)
-
-                      val awayX = (myX - prevEnemyX) / enemyDist
-
-                      val awayY = (myY - prevEnemyY) / enemyDist
-
-                      tacticalX = cmdX * 0.4f + awayX * 0.6f
-
-                      tacticalY = cmdY * 0.4f + awayY * 0.6f
+                      baseMoveY = 0.25f * strafeSign
 
                   }
 
 
 
-                  var finalMoveX = if (underThreat) (dodgeX * 0.88f + tacticalX * 0.12f) else tacticalX
+                  var finalX = if (underThreat) (dodgeX * 0.85f + baseMoveX * 0.15f) else baseMoveX
 
-                  var finalMoveY = if (underThreat) (dodgeY * 0.88f + tacticalY * 0.12f) else tacticalY
+                  var finalY = if (underThreat) (dodgeY * 0.85f + baseMoveY * 0.15f) else baseMoveY
 
-                  val mLen = hypot(finalMoveX, finalMoveY)
+                  val mLen = hypot(finalX, finalY)
 
-                  if (mLen > 1f) {
+                  if (mLen > 0.05f) {
 
-                      finalMoveX /= mLen
+                      finalX /= mLen
 
-                      finalMoveY /= mLen
+                      finalY /= mLen
 
                   }
 
 
 
-                  lastAppliedMoveX = finalMoveX
+                  latestMoveX = finalX
 
-                  lastAppliedMoveY = finalMoveY
+                  latestMoveY = finalY
 
 
-
-                  // 오버레이 상태 텍스트 업데이트
 
                   val hpPct = (myHpRatio * 100).toInt().coerceIn(5, 100)
 
-                  hpAmmoText?.text = "내 HP: ${hpPct}% | 탄창: ${String.format("%.1f", myAmmoBars)}칸"
+                  hpAmmoText?.text = "HP: ${hpPct}% | 탄창: ${String.format("%.1f", myAmmoBars)}칸"
 
                   hpAmmoText?.setTextColor(
 
@@ -1542,37 +2182,205 @@ jobs:
 
                   statusText?.text = when {
 
-                      underThreat -> "⚡ 소형 고속탄 궤도 예측 회피 중!"
+                      underThreat -> "⚡ 고속탄 감지! 직선 궤도 수직 회피 드래그"
 
-                      hpPct < 40 -> "🩹 저체력 HP 회복 관리 (사격 중지·후퇴)"
+                      hpPct < 40 -> "🩹 저체력 회복 관리 (사격 중지·후퇴 드래그)"
 
-                      myAmmoBars < 1.0f -> "🔄 탄창 재장전 거리유지 무빙"
+                      enemyDetected && latestShouldFire -> "🎯 적 발밑 빨간원 락온! 리드샷 조준·발사"
 
-                      redCnt >= 4 -> "🎯 빨간원 가속도 궤적 리드샷 조준"
+                      enemyDetected -> "🕹️ 적 추적 + 거리유지 카이팅 드래그"
 
-                      else -> "🕹️ 초록원(나) 이동 반영 · 전장 감시"
+                      else -> "🕹️ 패드 연속 홀드-드래그 무빙 작동 중"
 
                   }
-
-
-
-                  dispatchPadTouch(finalMoveX, finalMoveY, aimX, aimY, shouldFire, w.toFloat(), h.toFloat())
 
               }
 
 
 
-              // 내 브롤러(초록 원) 상단의 HP 바와 주황색 3칸 탄창 바 픽셀 스캔
+              // [핵심 해결] 조준 각도 흔들림이 전혀 없는 동일 선상(Radial) 홀드-드래그 경로 생성
 
-              private fun scanMyHpAndAmmoBars(bmp: Bitmap, cx: Float, cy: Float, w: Int, h: Int) {
+              // (0.90R <-> 1.04R 구간을 같은 각도로 유지한 뒤 마지막에 바깥쪽 1.04R로 밀며 손을 떼므로 사격 취소가 절대 발생하지 않음)
+
+              private fun buildRadialHoldDragPath(
+
+                  startX: Float,
+
+                  startY: Float,
+
+                  ux: Float,
+
+                  uy: Float,
+
+                  dragR: Float,
+
+                  holdLoops: Int
+
+              ): Path {
+
+                  val path = Path()
+
+                  path.moveTo(startX, startY)
+
+
+
+                  val innerX = startX + ux * (dragR * 0.90f)
+
+                  val innerY = startY + uy * (dragR * 0.90f)
+
+                  val outerX = startX + ux * (dragR * 1.04f)
+
+                  val outerY = startY + uy * (dragR * 1.04f)
+
+
+
+                  path.lineTo(outerX, outerY)
+
+                  for (i in 0 until holdLoops) {
+
+                      path.lineTo(innerX, innerY)
+
+                      path.lineTo(outerX, outerY)
+
+                  }
+
+                  return path
+
+              }
+
+
+
+              // 좌측 무빙 패드 & 우측 에임 패드 홀드-드래그 제스처 주입
+
+              private fun dispatchHoldDragPadGesture(
+
+                  mx: Float, my: Float,
+
+                  ax: Float, ay: Float,
+
+                  fire: Boolean
+
+              ) {
+
+                  if (!aiActive || gestureBusy) return
+
+
+
+                  val leftPadX = realScreenW * 0.15f
+
+                  val leftPadY = realScreenH * 0.76f
+
+                  val moveDragR = realScreenH * 0.145f
+
+
+
+                  val rightPadX = realScreenW * 0.84f
+
+                  val rightPadY = realScreenH * 0.74f
+
+                  val aimDragR = realScreenH * 0.165f
+
+
+
+                  val builder = GestureDescription.Builder()
+
+                  var added = false
+
+
+
+                  val mLen = hypot(mx, my)
+
+                  if (mLen > 0.1f) {
+
+                      val mux = mx / mLen
+
+                      val muy = my / mLen
+
+                      val movePath = buildRadialHoldDragPath(leftPadX, leftPadY, mux, muy, moveDragR, 5)
+
+                      builder.addStroke(GestureDescription.StrokeDescription(movePath, 0L, 290L, false))
+
+                      added = true
+
+                  }
+
+
+
+                  val aLen = hypot(ax, ay)
+
+                  if (fire && aLen > 0.1f) {
+
+                      val aux = ax / aLen
+
+                      val auy = ay / aLen
+
+                      // 15ms 시차로 우측 에임 패드를 당기고 바깥쪽에서 홀드한 뒤 205ms에 놓아 정확히 목표 각도로 발사!
+
+                      val aimPath = buildRadialHoldDragPath(rightPadX, rightPadY, aux, auy, aimDragR, 3)
+
+                      builder.addStroke(GestureDescription.StrokeDescription(aimPath, 15L, 190L, false))
+
+                      added = true
+
+                  }
+
+
+
+                  if (!added) return
+
+
+
+                  gestureBusy = true
+
+                  lastGestureStartMs = System.currentTimeMillis()
+
+
+
+                  val dispatched = dispatchGesture(
+
+                      builder.build(),
+
+                      object : GestureResultCallback() {
+
+                          override fun onCompleted(gestureDescription: GestureDescription?) {
+
+                              gestureBusy = false
+
+                          }
+
+
+
+                          override fun onCancelled(gestureDescription: GestureDescription?) {
+
+                              gestureBusy = false
+
+                          }
+
+                      },
+
+                      handler
+
+                  )
+
+                  if (!dispatched) {
+
+                      gestureBusy = false
+
+                  }
+
+              }
+
+
+
+              private fun scanMyHpAndAmmoFromBar(bmp: Bitmap, barCx: Float, barCy: Float, w: Int, h: Int) {
 
                   val barWidth = (w * 0.055f).toInt().coerceAtLeast(36)
 
-                  val hpY = (cy - h * 0.115f).toInt().coerceIn(10, h - 20)
+                  val hpY = barCy.toInt().coerceIn(10, h - 25)
 
-                  val ammoY = (cy - h * 0.096f).toInt().coerceIn(10, h - 20)
+                  val ammoY = (barCy + h * 0.019f).toInt().coerceIn(10, h - 20)
 
-                  val startX = (cx - barWidth / 2f).toInt().coerceIn(10, w - barWidth - 10)
+                  val startX = (barCx - barWidth / 2f).toInt().coerceIn(10, w - barWidth - 10)
 
 
 
@@ -1598,9 +2406,7 @@ jobs:
 
                       val hb = Color.blue(cHp)
 
-                      // 내 HP 바: 초록색(정상) 또는 노란/빨간색(피격 시) 밝은 픽셀 여부
-
-                      if ((hg > 160 && hb < 110) || (hr > 180 && hg > 140 && hb < 90)) {
+                      if ((hg > 160 && hb < 115) || (hr > 180 && hg > 140 && hb < 95)) {
 
                           hpColoredPixels++
 
@@ -1616,9 +2422,7 @@ jobs:
 
                       val ab = Color.blue(cAm)
 
-                      // 주황색/노란색 3칸 탄창 바 픽셀 (R>195, G 85..210, B<80)
-
-                      if (ar > 195 && ag in 85..215 && ab < 85) {
+                      if (ar > 195 && ag in 80..220 && bLow(ab)) {
 
                           ammoOrangePixels++
 
@@ -1638,15 +2442,17 @@ jobs:
 
                   val measuredAmmo = ((ammoOrangePixels.toFloat() / samples.toFloat()) * 3.0f).coerceIn(0f, 3.0f)
 
-                  myAmmoBars = myAmmoBars * 0.6f + (if (ammoOrangePixels == 0) 2.0f else measuredAmmo) * 0.4f
+                  myAmmoBars = myAmmoBars * 0.6f + (if (ammoOrangePixels == 0) 2.2f else measuredAmmo) * 0.4f
 
               }
 
 
 
-              // 크기가 작은 고속 객체만 클러스터링하여 탄환으로 추출 (큰 브롤러 몸체나 배경 이펙트 배제)
+              private fun bLow(b: Int): Boolean = b < 88
 
-              private fun extractSmallProjectileBlobs(
+
+
+              private fun extractClusters(
 
                   mask: BooleanArray,
 
@@ -1654,13 +2460,19 @@ jobs:
 
                   gridH: Int,
 
-                  step: Int
+                  step: Int,
 
-              ): List<FastBlob> {
+                  minCells: Int,
+
+                  maxCells: Int
+
+              ): List<ClusterBlob> {
 
                   val visited = BooleanArray(mask.size)
 
-                  val blobs = mutableListOf<FastBlob>()
+                  val blobs = mutableListOf<ClusterBlob>()
+
+                  val queue = IntArray(256)
 
 
 
@@ -1678,9 +2490,15 @@ jobs:
 
                           var sumY = 0f
 
-                          var count = 0
+                          var minX = 99999f
 
-                          val queue = IntArray(64)
+                          var maxX = 0f
+
+                          var minY = 99999f
+
+                          var maxY = 0f
+
+                          var count = 0
 
                           var qHead = 0
 
@@ -1692,7 +2510,7 @@ jobs:
 
 
 
-                          while (qHead < qTail && count < 45) {
+                          while (qHead < qTail && count < maxCells + 15) {
 
                               val curr = queue[qHead++]
 
@@ -1700,17 +2518,29 @@ jobs:
 
                               val cx = curr % gridW
 
-                              sumX += cx * step
+                              val px = cx * step.toFloat()
 
-                              sumY += cy * step
+                              val py = cy * step.toFloat()
+
+                              sumX += px
+
+                              sumY += py
+
+                              if (px < minX) minX = px
+
+                              if (px > maxX) maxX = px
+
+                              if (py < minY) minY = py
+
+                              if (py > maxY) maxY = py
 
                               count++
 
 
 
-                              for (ny in (cy - 1)..(cy + 1)) {
+                              for (ny in (cy - 2)..(cy + 2)) {
 
-                                  for (nx in (cx - 1)..(cx + 1)) {
+                                  for (nx in (cx - 2)..(cx + 2)) {
 
                                       if (nx in 1 until gridW - 1 && ny in 1 until gridH - 1) {
 
@@ -1734,11 +2564,9 @@ jobs:
 
 
 
-                          // 탄환 조건: 크기가 작고 응집된 블롭 (2개 ~ 22개 그리드 셀 이내)
+                          if (count in minCells..maxCells) {
 
-                          if (count in 2..22) {
-
-                              blobs.add(FastBlob(sumX / count, sumY / count, count))
+                              blobs.add(ClusterBlob(sumX / count, sumY / count, count, minX, maxX, minY, maxY))
 
                           }
 
@@ -1752,13 +2580,11 @@ jobs:
 
 
 
-              // 이전 프레임 소형 블롭과 매칭하여 일정 속도 이상으로 빠르게 날아오는 탄환만 직선 궤도 추적
-
               private fun matchAndTrackProjectiles(
 
-                  currBlobs: List<FastBlob>,
+                  currBlobs: List<ClusterBlob>,
 
-                  oldBlobs: List<FastBlob>,
+                  oldBlobs: List<ClusterBlob>,
 
                   dt: Float,
 
@@ -1766,9 +2592,9 @@ jobs:
 
               ): List<TrackedProjectile> {
 
-                  val minProjectileSpeed = screenW * 0.22f // 일정 속도 이상 고속 탄환 임계값
+                  val minProjectileSpeed = screenW * 0.20f
 
-                  val maxJumpDist = screenW * 0.18f
+                  val maxJumpDist = screenW * 0.20f
 
                   val tracked = mutableListOf<TrackedProjectile>()
 
@@ -1776,7 +2602,7 @@ jobs:
 
                   for (cb in currBlobs) {
 
-                      var bestOld: FastBlob? = null
+                      var bestOld: ClusterBlob? = null
 
                       var bestDist = maxJumpDist
 
@@ -1818,8 +2644,6 @@ jobs:
 
 
 
-              // 내 브롤러가 움직이는 속도(myVx, myVy)까지 고려한 상대 궤도 예측 및 최적 회피 방향 산출
-
               private fun computeRelativeTrajectoryDodge(
 
                   projectiles: List<TrackedProjectile>,
@@ -1840,11 +2664,9 @@ jobs:
 
                   if (projectiles.isEmpty()) return Pair(0f, 0f)
 
-                  val safeRadius = screenW * 0.065f
+                  val safeRadius = screenW * 0.07f
 
 
-
-                  // 내가 움직이는 상대 좌표계에서 위협 탄환 필터링
 
                   val threats = projectiles.filter { p ->
 
@@ -1882,8 +2704,6 @@ jobs:
 
 
 
-                  // 8방향 후보 이동 벡터 중 (내가 해당 방향으로 움직였을 때) 탄환 직선 궤도와의 최소 거리가 가장 먼 안전 방향 선택
-
                   var bestDirX = 0f
 
                   var bestDirY = 0f
@@ -1910,8 +2730,6 @@ jobs:
 
                       for (th in threats) {
 
-                          // 후보 이동 시 상대 속도 v_rel = v_proj - v_cand
-
                           val rvx = th.vx - candVx
 
                           val rvy = th.vy - candVy
@@ -1936,8 +2754,6 @@ jobs:
 
 
 
-                      // 상단 스틱 지시 방향(cmdX, cmdY)과의 일치도 보너스 합산
-
                       val userAlign = (candUx * cmdX + candUy * cmdY) * 28f
 
                       val totalScore = minClearance + userAlign
@@ -1960,91 +2776,11 @@ jobs:
 
               }
 
-
-
-              private fun dispatchPadTouch(
-
-                  mx: Float, my: Float,
-
-                  ax: Float, ay: Float,
-
-                  fire: Boolean,
-
-                  screenW: Float = 2400f,
-
-                  screenH: Float = 1080f
-
-              ) {
-
-                  if (!aiActive) return
-
-                  val leftPadX = screenW * 0.14f
-
-                  val leftPadY = screenH * 0.78f
-
-                  val rightPadX = screenW * 0.86f
-
-                  val rightPadY = screenH * 0.78f
-
-                  val dragR = screenH * 0.11f
-
-
-
-                  val builder = GestureDescription.Builder()
-
-                  var hasStroke = false
-
-
-
-                  if (hypot(mx, my) > 0.08f) {
-
-                      val movePath = Path().apply {
-
-                          moveTo(leftPadX, leftPadY)
-
-                          lineTo(leftPadX + mx * dragR, leftPadY + my * dragR)
-
-                      }
-
-                      builder.addStroke(GestureDescription.StrokeDescription(movePath, 0L, 80L, false))
-
-                      hasStroke = true
-
-                  }
-
-
-
-                  if (fire && hypot(ax, ay) > 0.1f) {
-
-                      val aimPath = Path().apply {
-
-                          moveTo(rightPadX, rightPadY)
-
-                          lineTo(rightPadX + ax * dragR, rightPadY + ay * dragR)
-
-                      }
-
-                      builder.addStroke(GestureDescription.StrokeDescription(aimPath, 0L, 60L, false))
-
-                      hasStroke = true
-
-                  }
-
-
-
-                  if (hasStroke) {
-
-                      dispatchGesture(builder.build(), null, null)
-
-                  }
-
-              }
-
           }
 
           ''')
 
-          print("Android v2 source generated successfully.")
+          print("Android v3.1 source generated successfully.")
 
           EOF
 
@@ -2068,7 +2804,7 @@ jobs:
 
       - name: Rename APK for Easy Download
 
-        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay_v3.2.apk
 
 
 
@@ -2078,13 +2814,13 @@ jobs:
 
         with:
 
-          name: Brawl_AI_Overlay_APK
+          name: Brawl_AI_Overlay_v3.2_APK
 
-          path: Brawl_AI_Overlay.apk
+          path: Brawl_AI_Overlay_v3.2.apk
 
 
 
-      - name: Publish APK to GitHub Releases
+      - name: Publish APK to GitHub Releases (Clean Old v1/v2 Releases)
 
         continue-on-error: true
 
@@ -2094,7 +2830,15 @@ jobs:
 
         run: |
 
+          gh release delete v1.0 --yes || true
+
           gh release delete v2.0 --yes || true
 
-          gh release create v2.0 Brawl_AI_Overlay.apk --title "Brawl AI Overlay v2.0 설치파일 (APK)" --notes "초록/파랑/빨강 원 분리 인식 + 가속도 2차 궤적 에임 + 소형 고속탄 & 내 이동 반영 회피 + HP/탄창 관리 적용 버전"
+          gh release delete v3.0 --yes || true
+
+          gh release delete v3.1 --yes || true
+
+          gh release delete v3.2 --yes || true
+
+          gh release create v3.2 Brawl_AI_Overlay_v3.2.apk --title "Brawl AI Overlay v3.2 최신 설치파일 (APK)" --notes "이전 v2.0 릴리즈 자동 삭제 + 직선 홀드-드래그(Radial Hold-Drag) 패드 엔진 + 발밑 원 평면 정렬 조준 수정판"
 
