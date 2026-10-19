@@ -148,9 +148,9 @@ jobs:
 
                   targetSdk = 34
 
-                  versionCode = 3
+                  versionCode = 4
 
-                  versionName = "3.1"
+                  versionName = "3.2"
 
               }
 
@@ -362,7 +362,7 @@ jobs:
 
                   val title = TextView(this).apply {
 
-                      text = "BRAWL AI OVERLAY v3.1"
+                      text = "BRAWL AI OVERLAY v3.2"
 
                       textSize = 22f
 
@@ -454,7 +454,7 @@ jobs:
 
                               svc.showFloatingWindow()
 
-                              Toast.makeText(context, "왼쪽 위에 v3.1 오버레이 창이 떴습니다! 브롤스타즈를 켜세요.", Toast.LENGTH_LONG).show()
+                              Toast.makeText(context, "왼쪽 위에 v3.2 오버레이 창이 떴습니다! 브롤스타즈를 켜세요.", Toast.LENGTH_LONG).show()
 
                               finish()
 
@@ -752,6 +752,26 @@ jobs:
 
 
 
+              override fun onDestroy() {
+
+                  super.onDestroy()
+
+                  aiActive = false
+
+                  rootOverlay?.let {
+
+                      try { wm?.removeView(it) } catch (_: Throwable) {}
+
+                  }
+
+                  rootOverlay = null
+
+                  if (instance === this) instance = null
+
+              }
+
+
+
               private fun updateRealScreenSize() {
 
                   val dm = Resources.getSystem().displayMetrics
@@ -774,7 +794,13 @@ jobs:
 
               fun showFloatingWindow() {
 
-                  if (rootOverlay != null) return
+                  rootOverlay?.let {
+
+                      try { wm?.removeView(it) } catch (_: Throwable) {}
+
+                      rootOverlay = null
+
+                  }
 
 
 
@@ -840,7 +866,7 @@ jobs:
 
                   val titleTv = TextView(this).apply {
 
-                      text = "● BRAWL AI v3.1 (상단바 드래그)"
+                      text = "● BRAWL AI v3.2 (상단바 드래그)"
 
                       textSize = 11f
 
@@ -2778,7 +2804,7 @@ jobs:
 
       - name: Rename APK for Easy Download
 
-        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay.apk
+        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay_v3.2.apk
 
 
 
@@ -2788,13 +2814,13 @@ jobs:
 
         with:
 
-          name: Brawl_AI_Overlay_APK
+          name: Brawl_AI_Overlay_v3.2_APK
 
-          path: Brawl_AI_Overlay.apk
+          path: Brawl_AI_Overlay_v3.2.apk
 
 
 
-      - name: Publish APK to GitHub Releases
+      - name: Publish APK to GitHub Releases (Clean Old v1/v2 Releases)
 
         continue-on-error: true
 
@@ -2804,7 +2830,15 @@ jobs:
 
         run: |
 
+          gh release delete v1.0 --yes || true
+
+          gh release delete v2.0 --yes || true
+
+          gh release delete v3.0 --yes || true
+
           gh release delete v3.1 --yes || true
 
-          gh release create v3.1 Brawl_AI_Overlay.apk --title "Brawl AI Overlay v3.1 설치파일 (APK)" --notes "직선 홀드-드래그(Radial Hold-Drag) 패드 엔진 + 발밑 원 평면 정렬 조준 수정판"
+          gh release delete v3.2 --yes || true
+
+          gh release create v3.2 Brawl_AI_Overlay_v3.2.apk --title "Brawl AI Overlay v3.2 최신 설치파일 (APK)" --notes "이전 v2.0 릴리즈 자동 삭제 + 직선 홀드-드래그(Radial Hold-Drag) 패드 엔진 + 발밑 원 평면 정렬 조준 수정판"
 
