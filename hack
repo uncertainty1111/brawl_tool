@@ -760,7 +760,7 @@ jobs:
 
                   rootOverlay?.let {
 
-                      try { wm?.removeView(it) } catch (_: Throwable) {}
+                      try { wm?.removeView(it) } catch (e: Throwable) {}
 
                   }
 
@@ -796,7 +796,7 @@ jobs:
 
                   rootOverlay?.let {
 
-                      try { wm?.removeView(it) } catch (_: Throwable) {}
+                      try { wm?.removeView(it) } catch (e: Throwable) {}
 
                       rootOverlay = null
 
@@ -1382,7 +1382,7 @@ jobs:
 
                                   }
 
-                              } catch (_: Throwable) {
+                              } catch (e: Throwable) {
 
                               }
 
@@ -2830,15 +2830,15 @@ jobs:
 
         run: |
 
-          gh release delete v1.0 --yes || true
+          gh release delete v1.0 --cleanup-tag --yes || true
 
-          gh release delete v2.0 --yes || true
+          gh release delete v2.0 --cleanup-tag --yes || true
 
-          gh release delete v3.0 --yes || true
+          gh release delete v3.0 --cleanup-tag --yes || true
 
-          gh release delete v3.1 --yes || true
+          gh release delete v3.1 --cleanup-tag --yes || true
 
-          gh release delete v3.2 --yes || true
+          gh release delete v3.2 --cleanup-tag --yes || true
 
           gh release create v3.2 Brawl_AI_Overlay_v3.2.apk --title "Brawl AI Overlay v3.2 최신 설치파일 (APK)" --notes "이전 v2.0 릴리즈 자동 삭제 + 직선 홀드-드래그(Radial Hold-Drag) 패드 엔진 + 발밑 원 평면 정렬 조준 수정판"
 
