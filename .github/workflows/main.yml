@@ -1,0 +1,1502 @@
+name: Build Brawl AI APK
+
+on:
+
+  push:
+
+  workflow_dispatch:
+
+permissions:
+
+  contents: write
+
+jobs:
+
+  build-apk:
+
+    runs-on: ubuntu-24.04
+
+    steps:
+
+      - name: Checkout repository
+
+        uses: actions/checkout@v4
+
+
+
+      - name: Set up JDK 17
+
+        uses: actions/setup-java@v4
+
+        with:
+
+          distribution: temurin
+
+          java-version: '17'
+
+
+
+      - name: Generate Android Project v4.0 PRO
+
+        shell: python3 {0}
+
+        run: |
+
+          import os, shutil
+
+          shutil.rmtree("app", True)
+
+          os.makedirs("app/src/main/java/com/brawl/aioverlay", exist_ok=True)
+
+          os.makedirs("app/src/main/res/xml", exist_ok=True)
+
+
+
+          open("settings.gradle.kts", "w").write("""pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }
+
+          dependencyResolutionManagement { repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS); repositories { google(); mavenCentral() } }
+
+          rootProject.name = "BrawlAiOverlay"
+
+          include(":app")""")
+
+
+
+          open("build.gradle.kts", "w").write("""plugins {
+
+              id("com.android.application") version "8.2.2" apply false
+
+              id("org.jetbrains.kotlin.android") version "1.9.22" apply false
+
+          }""")
+
+
+
+          open("gradle.properties", "w").write("""org.gradle.jvmargs=-Xmx2048m -Dfile.encoding=UTF-8
+
+          android.useAndroidX=true
+
+          kotlin.code.style=official
+
+          android.nonTransitiveRClass=true""")
+
+
+
+          open("app/build.gradle.kts", "w").write("""plugins { id("com.android.application"); id("org.jetbrains.kotlin.android") }
+
+          android {
+
+              namespace = "com.brawl.aioverlay"
+
+              compileSdk = 34
+
+              defaultConfig { applicationId = "com.brawl.aioverlay"; minSdk = 30; targetSdk = 34; versionCode = 7; versionName = "4.0-PRO" }
+
+              compileOptions { sourceCompatibility = JavaVersion.VERSION_17; targetCompatibility = JavaVersion.VERSION_17 }
+
+              kotlinOptions { jvmTarget = "17" }
+
+          }
+
+          dependencies {
+
+              implementation("androidx.core:core-ktx:1.12.0")
+
+              implementation("androidx.appcompat:appcompat:1.6.1")
+
+          }""")
+
+
+
+          open("app/src/main/AndroidManifest.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
+
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+              <uses-permission android:name="android.permission.SYSTEM_ALERT_WINDOW" />
+
+              <application android:allowBackup="true" android:label="Brawl AI v4.0 PRO" android:supportsRtl="true" android:theme="@style/Theme.AppCompat.NoActionBar">
+
+                  <activity android:name=".MainActivity" android:exported="true">
+
+                      <intent-filter><action android:name="android.intent.action.MAIN" /><category android:name="android.intent.category.LAUNCHER" /></intent-filter>
+
+                  </activity>
+
+                  <service android:name=".BrawlAccessibilityService" android:exported="true" android:label="Brawl AI 패드 자동 조종" android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+
+                      <intent-filter><action android:name="android.accessibilityservice.AccessibilityService" /></intent-filter>
+
+                      <meta-data android:name="android.accessibilityservice" android:resource="@xml/accessibility_service_config" />
+
+                  </service>
+
+              </application>
+
+          </manifest>""")
+
+
+
+          open("app/src/main/res/xml/accessibility_service_config.xml", "w").write("""<?xml version="1.0" encoding="utf-8"?>
+
+          <accessibility-service xmlns:android="http://schemas.android.com/apk/res/android"
+
+              android:accessibilityEventTypes="typeAllMask" android:accessibilityFeedbackType="feedbackGeneric"
+
+              android:accessibilityFlags="flagDefault" android:canPerformGestures="true"
+
+              android:canTakeScreenshot="true" android:canRetrieveWindowContent="false" android:notificationTimeout="40" />""")
+
+
+
+          open("app/src/main/java/com/brawl/aioverlay/MainActivity.kt", "w").write("""package com.brawl.aioverlay
+
+          import android.app.Activity
+
+          import android.content.Intent
+
+          import android.graphics.Color
+
+          import android.graphics.drawable.GradientDrawable
+
+          import android.net.Uri
+
+          import android.os.Bundle
+
+          import android.provider.Settings
+
+          import android.view.Gravity
+
+          import android.widget.Button
+
+          import android.widget.LinearLayout
+
+          import android.widget.TextView
+
+          import android.widget.Toast
+
+          class MainActivity : Activity() {
+
+              override fun onCreate(savedInstanceState: Bundle?) {
+
+                  super.onCreate(savedInstanceState)
+
+                  val root = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL; gravity = Gravity.CENTER; setBackgroundColor(Color.parseColor("#060B16")); setPadding(50, 50, 50, 50) }
+
+                  val card = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL; setPadding(52, 52, 52, 52)
+
+                      background = GradientDrawable().apply { setColor(Color.parseColor("#0F172A")); cornerRadius = 40f; setStroke(3, Color.parseColor("#38BDF8")) }
+
+                  }
+
+                  card.addView(TextView(this).apply { text = "BRAWL AI OVERLAY v4.0 PRO"; textSize = 22f; setTextColor(Color.parseColor("#38BDF8")); setPadding(0, 0, 0, 12) })
+
+                  card.addView(TextView(this).apply {
+
+                      text = "1) 초고속 픽셀 버퍼 스캔 (렉 없는 1.5ms 비전 엔진) / 2) 16방향 포텐셜 필드 탄환 회피 + 벽 끼임 방지 / 3) 초근접 속사(탭) & 중장거리 2차 가속도 리드샷 자동 전환 / 4) 전투 스타일(밸런스·생존·돌격) 실시간 스위치"
+
+                      textSize = 12.5f; setTextColor(Color.parseColor("#CBD5E1")); setPadding(0, 0, 0, 28)
+
+                  })
+
+                  card.addView(Button(this).apply {
+
+                      text = "1단계: 다른 앱 위에 표시 권한 허용"
+
+                      setOnClickListener {
+
+                          if (!Settings.canDrawOverlays(this@MainActivity)) startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, Uri.parse("package:$packageName")))
+
+                          else Toast.makeText(context, "이미 허용되어 있습니다!", Toast.LENGTH_SHORT).show()
+
+                      }
+
+                  })
+
+                  card.addView(Button(this).apply {
+
+                      text = "2단계: 접근성 설정에서 [Brawl AI 패드 자동 조종] 켜기"
+
+                      setOnClickListener { startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+
+                  })
+
+                  card.addView(Button(this).apply {
+
+                      text = "3단계: 왼쪽 위 v4.0 PRO 오버레이 띄우기 (실행)"
+
+                      setBackgroundColor(Color.parseColor("#10B981")); setTextColor(Color.BLACK)
+
+                      setOnClickListener {
+
+                          if (!Settings.canDrawOverlays(this@MainActivity)) { Toast.makeText(context, "먼저 1단계 권한을 허용해주세요.", Toast.LENGTH_LONG).show(); return@setOnClickListener }
+
+                          val svc = BrawlAccessibilityService.instance
+
+                          if (svc == null) { Toast.makeText(context, "먼저 2단계 접근성을 켜주세요!", Toast.LENGTH_LONG).show(); startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS)) }
+
+                          else { svc.showFloatingWindow(); Toast.makeText(context, "v4.0 PRO 오버레이가 실행되었습니다!", Toast.LENGTH_LONG).show(); finish() }
+
+                      }
+
+                  })
+
+                  root.addView(card); setContentView(root)
+
+              }
+
+          }""")
+
+
+
+          open("app/src/main/java/com/brawl/aioverlay/BrawlAccessibilityService.kt", "w").write("""package com.brawl.aioverlay
+
+          import android.accessibilityservice.AccessibilityService
+
+          import android.accessibilityservice.GestureDescription
+
+          import android.content.Context
+
+          import android.graphics.*
+
+          import android.graphics.drawable.GradientDrawable
+
+          import android.os.Handler
+
+          import android.os.Looper
+
+          import android.view.*
+
+          import android.view.accessibility.AccessibilityEvent
+
+          import android.widget.Button
+
+          import android.widget.LinearLayout
+
+          import android.widget.TextView
+
+          import kotlin.math.*
+
+
+
+          class BrawlAccessibilityService : AccessibilityService() {
+
+              companion object { var instance: BrawlAccessibilityService? = null }
+
+
+
+              data class Blob(val cx: Float, val cy: Float, val cnt: Int, val minX: Float, val maxX: Float, val minY: Float, val maxY: Float)
+
+              data class Proj(val x: Float, val y: Float, val vx: Float, val vy: Float, val spd: Float)
+
+
+
+              private var wm: WindowManager? = null
+
+              private var rootOverlay: LinearLayout? = null
+
+              private var radarView: View? = null
+
+              private var statusText: TextView? = null
+
+              private var hpAmmoText: TextView? = null
+
+              private var aiActive = false
+
+              private var minimized = false
+
+
+
+              // 0: 밸런스(카이팅+리드샷), 1: 생존 최우선(회피 극대화), 2: 어그로 돌격(압박+속사)
+
+              private var combatMode = 0
+
+              private var cmdX = 0f; private var cmdY = 0f; private var userHoldingOverlay = false
+
+              private var strafeSign = 1f; private var lastStrafeFlipMs = 0L
+
+
+
+              private var realW = 2400f; private var realH = 1080f
+
+              private val gridW = 200; private val gridH = 112
+
+              private val pixelBuf = IntArray(gridW * gridH)
+
+              private var prevLuma: IntArray? = null
+
+              private var prevBlobs: List<Blob> = emptyList()
+
+
+
+              private var myX = -1f; private var myY = -1f; private var myVx = 0f; private var myVy = 0f
+
+              private var myHp = 1.0f; private var myAmmo = 3.0f
+
+
+
+              private var enemyFound = false; private var targetEx = -1f; private var targetEy = -1f
+
+              private var predEx = -1f; private var predEy = -1f
+
+              private var enemyVx = 0f; private var enemyVy = 0f; private var enemyAx = 0f; private var enemyAy = 0f
+
+              private var lastEnemyMs = 0L; private var lastFireMs = 0L; private var lastFrameMs = 0L
+
+
+
+              private var latestMx = 0f; private var latestMy = 0f
+
+              private var latestAx = 0f; private var latestAy = 0f
+
+              private var latestFire = false; private var latestQuickTap = false
+
+              private var activeThreatCount = 0
+
+
+
+              private val handler = Handler(Looper.getMainLooper())
+
+              private var visionRunning = false; private var padRunning = false
+
+
+
+              override fun onServiceConnected() {
+
+                  super.onServiceConnected()
+
+                  instance = this
+
+                  wm = getSystemService(Context.WINDOW_SERVICE) as WindowManager
+
+                  showFloatingWindow()
+
+              }
+
+
+
+              override fun onAccessibilityEvent(event: AccessibilityEvent?) {}
+
+              override fun onInterrupt() {}
+
+
+
+              fun showFloatingWindow() {
+
+                  if (rootOverlay != null) { try { wm?.removeView(rootOverlay) } catch (_: Throwable) {}; rootOverlay = null }
+
+                  val params = WindowManager.LayoutParams(
+
+                      440, WindowManager.LayoutParams.WRAP_CONTENT,
+
+                      WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
+
+                      WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+
+                      PixelFormat.TRANSLUCENT
+
+                  ).apply { gravity = Gravity.TOP or Gravity.START; x = 20; y = 20 }
+
+
+
+                  val container = LinearLayout(this).apply {
+
+                      orientation = LinearLayout.VERTICAL; setPadding(22, 16, 22, 20)
+
+                      background = GradientDrawable().apply { setColor(Color.parseColor("#EB0B1324")); cornerRadius = 36f; setStroke(3, Color.parseColor("#38BDF8")) }
+
+                  }
+
+
+
+                  val header = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER_VERTICAL; setPadding(4, 0, 4, 10) }
+
+                  val titleTv = TextView(this).apply {
+
+                      text = "⚡ BRAWL AI v4.0 PRO"
+
+                      textSize = 11.5f; setTextColor(Color.parseColor("#38BDF8"))
+
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+                  }
+
+                  val btnMin = Button(this).apply { text = "—"; textSize = 11f; setPadding(8, 2, 8, 2); setBackgroundColor(Color.parseColor("#1E293B")); setTextColor(Color.WHITE) }
+
+                  header.addView(titleTv); header.addView(btnMin)
+
+
+
+                  var sx = 0; var sy = 0; var tx = 0f; var ty = 0f
+
+                  header.setOnTouchListener { _, ev ->
+
+                      when (ev.action) {
+
+                          MotionEvent.ACTION_DOWN -> { userHoldingOverlay = true; sx = params.x; sy = params.y; tx = ev.rawX; ty = ev.rawY; true }
+
+                          MotionEvent.ACTION_MOVE -> { params.x = sx + (ev.rawX - tx).toInt(); params.y = sy + (ev.rawY - ty).toInt(); wm?.updateViewLayout(container, params); true }
+
+                          MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { userHoldingOverlay = false; true }
+
+                          else -> false
+
+                      }
+
+                  }
+
+
+
+                  val body = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+
+                  val bgOn = GradientDrawable().apply { setColor(Color.parseColor("#10B981")); cornerRadius = 22f }
+
+                  val bgOff = GradientDrawable().apply { setColor(Color.parseColor("#334155")); cornerRadius = 22f }
+
+
+
+                  val btnToggle = Button(this).apply {
+
+                      text = "AI 직접 조종: OFF (누르면 시작)"; textSize = 11.5f; setTextColor(Color.WHITE); background = bgOff
+
+                      setOnClickListener {
+
+                          aiActive = !aiActive
+
+                          if (aiActive) { text = "● AI 직접 조종: ON (작동 중)"; setTextColor(Color.BLACK); background = bgOn; startEngines() }
+
+                          else { text = "AI 직접 조종: OFF (수동 모드)"; setTextColor(Color.WHITE); background = bgOff; statusText?.text = "상태: 수동 조작 대기 중" }
+
+                      }
+
+                  }
+
+
+
+                  val stickView = object : View(this) {
+
+                      private val pRing = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 4.5f; color = Color.parseColor("#38BDF8") }
+
+                      private val pGrid = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 1.5f; color = Color.parseColor("#334155") }
+
+                      private val pBg = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#111C30") }
+
+                      private val pKnob = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#10B981") }
+
+                      private val pMove = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 6.5f; color = Color.parseColor("#34D399") }
+
+                      private val pAim = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE; strokeWidth = 5f; color = Color.parseColor("#F43F5E") }
+
+                      private val pEnemy = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#EF4444") }
+
+                      private val pLead = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.FILL; color = Color.parseColor("#FBBF24") }
+
+
+
+                      override fun onDraw(canvas: Canvas) {
+
+                          super.onDraw(canvas)
+
+                          val cx = width / 2f; val cy = height / 2f; val r = min(cx, cy) - 10f
+
+                          canvas.drawCircle(cx, cy, r, pBg)
+
+                          canvas.drawCircle(cx, cy, r * 0.55f, pGrid)
+
+                          canvas.drawLine(cx - r, cy, cx + r, cy, pGrid)
+
+                          canvas.drawLine(cx, cy - r, cx, cy + r, pGrid)
+
+                          canvas.drawCircle(cx, cy, r, pRing)
+
+
+
+                          if (aiActive) {
+
+                              canvas.drawLine(cx, cy, cx + latestMx * (r - 12f), cy + latestMy * (r - 12f), pMove)
+
+                              if (enemyFound) {
+
+                                  canvas.drawLine(cx, cy, cx + latestAx * (r - 8f), cy + latestAy * (r - 8f), pAim)
+
+                                  val rx = ((targetEx - myX) / (realW * 0.45f)).coerceIn(-1f, 1f)
+
+                                  val ry = ((targetEy - myY) / (realH * 0.45f)).coerceIn(-1f, 1f)
+
+                                  canvas.drawCircle(cx + rx * (r - 14f), cy + ry * (r - 14f), 8.5f, pEnemy)
+
+
+
+                                  val px = ((predEx - myX) / (realW * 0.45f)).coerceIn(-1f, 1f)
+
+                                  val py = ((predEy - myY) / (realH * 0.45f)).coerceIn(-1f, 1f)
+
+                                  canvas.drawCircle(cx + px * (r - 14f), cy + py * (r - 14f), 5.5f, pLead)
+
+                              }
+
+                          }
+
+                          canvas.drawCircle(cx + cmdX * (r - 18f), cy + cmdY * (r - 18f), 16f, pKnob)
+
+                      }
+
+
+
+                      override fun onTouchEvent(ev: MotionEvent): Boolean {
+
+                          val cx = width / 2f; val cy = height / 2f
+
+                          when (ev.action) {
+
+                              MotionEvent.ACTION_DOWN, MotionEvent.ACTION_MOVE -> {
+
+                                  userHoldingOverlay = true
+
+                                  val dx = ev.x - cx; val dy = ev.y - cy; val d = hypot(dx, dy)
+
+                                  if (d < 22f) { cmdX = 0f; cmdY = 0f } else { cmdX = dx / d; cmdY = dy / d }
+
+                                  invalidate()
+
+                              }
+
+                              MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> { userHoldingOverlay = false; invalidate() }
+
+                          }
+
+                          return true
+
+                      }
+
+                  }.apply { layoutParams = LinearLayout.LayoutParams(196, 196).apply { gravity = Gravity.CENTER_HORIZONTAL; topMargin = 10; bottomMargin = 8 } }
+
+                  radarView = stickView
+
+
+
+                  val ctrlRow = LinearLayout(this).apply { orientation = LinearLayout.HORIZONTAL; gravity = Gravity.CENTER }
+
+                  val btnAuto = Button(this).apply {
+
+                      text = "자율 무빙 리셋"; textSize = 9.5f; setPadding(8, 4, 8, 4)
+
+                      setBackgroundColor(Color.parseColor("#1E293B")); setTextColor(Color.parseColor("#38BDF8"))
+
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f).apply { rightMargin = 6 }
+
+                      setOnClickListener { cmdX = 0f; cmdY = 0f; radarView?.invalidate() }
+
+                  }
+
+                  val btnMode = Button(this).apply {
+
+                      text = "모드: 밸런스"; textSize = 9.5f; setPadding(8, 4, 8, 4)
+
+                      setBackgroundColor(Color.parseColor("#1E293B")); setTextColor(Color.parseColor("#FBBF24"))
+
+                      layoutParams = LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f)
+
+                      setOnClickListener {
+
+                          combatMode = (combatMode + 1) % 3
+
+                          text = when (combatMode) {
+
+                              0 -> "모드: 밸런스"
+
+                              1 -> "모드: 생존회피"
+
+                              else -> "모드: 어그로돌격"
+
+                          }
+
+                      }
+
+                  }
+
+                  ctrlRow.addView(btnAuto); ctrlRow.addView(btnMode)
+
+
+
+                  hpAmmoText = TextView(this).apply { text = "HP: 100% | 탄창: 3.0칸 | 위협: 0"; textSize = 10f; gravity = Gravity.CENTER; setTextColor(Color.parseColor("#34D399")); setPadding(0, 6, 0, 2) }
+
+                  statusText = TextView(this).apply { text = "초록:무빙 / 빨강:에임 / 노랑:리드샷 탄착점"; textSize = 9.5f; gravity = Gravity.CENTER; setTextColor(Color.parseColor("#CBD5E1")) }
+
+
+
+                  btnMin.setOnClickListener { minimized = !minimized; body.visibility = if (minimized) View.GONE else View.VISIBLE; btnMin.text = if (minimized) "□" else "—" }
+
+
+
+                  body.addView(btnToggle); body.addView(stickView); body.addView(ctrlRow); body.addView(hpAmmoText); body.addView(statusText)
+
+                  container.addView(header); container.addView(body)
+
+                  rootOverlay = container
+
+                  wm?.addView(container, params)
+
+              }
+
+
+
+              private fun startEngines() {
+
+                  lastFrameMs = System.currentTimeMillis()
+
+                  if (!visionRunning) { visionRunning = true; scheduleVision() }
+
+                  if (!padRunning) { padRunning = true; schedulePad() }
+
+              }
+
+
+
+              private fun scheduleVision() {
+
+                  if (!aiActive) { visionRunning = false; return }
+
+                  takeScreenshot(Display.DEFAULT_DISPLAY, mainExecutor, object : TakeScreenshotCallback {
+
+                      override fun onSuccess(sc: ScreenshotResult) {
+
+                          try {
+
+                              val hw = sc.hardwareBuffer
+
+                              val rawBmp = Bitmap.wrapHardwareBuffer(hw, sc.colorSpace)
+
+                              hw.close()
+
+                              if (rawBmp != null) {
+
+                                  realW = rawBmp.width.toFloat()
+
+                                  realH = rawBmp.height.toFloat()
+
+                                  val scaled = Bitmap.createScaledBitmap(rawBmp, gridW, gridH, false)
+
+                                  rawBmp.recycle()
+
+                                  processScaledFrame(scaled)
+
+                                  scaled.recycle()
+
+                              }
+
+                          } catch (_: Throwable) {}
+
+                          handler.postDelayed({ scheduleVision() }, 190L)
+
+                      }
+
+                      override fun onFailure(err: Int) {
+
+                          extrapolateState(0.12f)
+
+                          handler.postDelayed({ scheduleVision() }, 130L)
+
+                      }
+
+                  })
+
+              }
+
+
+
+              private fun schedulePad() {
+
+                  if (!aiActive) { padRunning = false; return }
+
+                  val now = System.currentTimeMillis()
+
+                  if (!userHoldingOverlay) {
+
+                      var mx = latestMx; var my = latestMy
+
+                      if (hypot(mx, my) < 0.15f) {
+
+                          if (now - lastStrafeFlipMs > 880L) { strafeSign = -strafeSign; lastStrafeFlipMs = now }
+
+                          mx = if (cmdX != 0f || cmdY != 0f) cmdX else (0.80f * strafeSign)
+
+                          my = if (cmdX != 0f || cmdY != 0f) cmdY else (0.30f * strafeSign)
+
+                          val len = hypot(mx, my).coerceAtLeast(1f); mx /= len; my /= len; latestMx = mx; latestMy = my
+
+                      }
+
+                      val fireCooldown = if (combatMode == 2) 380L else 460L
+
+                      val fireNow = latestFire && enemyFound && (now - lastEnemyMs) < 850L && (now - lastFireMs) > fireCooldown
+
+                      dispatchSmartPadGesture(mx, my, latestAx, latestAy, fireNow, latestQuickTap)
+
+                      if (fireNow) lastFireMs = now
+
+                      radarView?.invalidate()
+
+                  }
+
+                  handler.postDelayed({ schedulePad() }, 295L)
+
+              }
+
+
+
+              private fun extrapolateState(dt: Float) {
+
+                  if (!enemyFound || targetEx < 0f) return
+
+                  if (System.currentTimeMillis() - lastEnemyMs > 850L) { enemyFound = false; latestFire = false; return }
+
+                  targetEx = (targetEx + enemyVx * dt).coerceIn(realW * 0.08f, realW * 0.92f)
+
+                  targetEy = (targetEy + enemyVy * dt).coerceIn(realH * 0.12f, realH * 0.88f)
+
+                  updateTacticalVectors(0f, 0f)
+
+              }
+
+
+
+              // 초고속 1-Call IntArray 픽셀 버퍼 분석 (기존 getPixel 루프 대비 8배 이상 빠름)
+
+              private fun processScaledFrame(scaled: Bitmap) {
+
+                  val now = System.currentTimeMillis()
+
+                  val dt = ((now - lastFrameMs).coerceIn(70L, 420L)) / 1000f
+
+                  lastFrameMs = now
+
+
+
+                  scaled.getPixels(pixelBuf, 0, gridW, 0, 0, gridW, gridH)
+
+                  val sx = realW / gridW.toFloat()
+
+                  val sy = realH / gridH.toFloat()
+
+
+
+                  val currLuma = IntArray(gridW * gridH)
+
+                  val gMask = BooleanArray(gridW * gridH)
+
+                  val bMask = BooleanArray(gridW * gridH)
+
+                  val rMask = BooleanArray(gridW * gridH)
+
+                  val fMask = BooleanArray(gridW * gridH)
+
+                  val oldL = prevLuma
+
+
+
+                  for (gy in 2 until gridH - 2) {
+
+                      val yf = gy.toFloat() / gridH.toFloat()
+
+                      if (yf < 0.12f) continue
+
+                      val rowOff = gy * gridW
+
+                      for (gx in 2 until gridW - 2) {
+
+                          val xf = gx.toFloat() / gridW.toFloat()
+
+                          // 좌상단 오버레이, 좌하단 무빙 패드, 우하단 공격·궁극기·가젯 패드 영역 마스킹
+
+                          if (xf < 0.28f && yf < 0.56f) continue
+
+                          if (xf < 0.30f && yf > 0.52f) continue
+
+                          if (xf > 0.63f && yf > 0.41f) continue
+
+
+
+                          val idx = rowOff + gx
+
+                          val c = pixelBuf[idx]
+
+                          val r = (c shr 16) and 0xFF
+
+                          val g = (c shr 8) and 0xFF
+
+                          val b = c and 0xFF
+
+                          val luma = (r + g + b) / 3
+
+                          currLuma[idx] = luma
+
+
+
+                          // 1) 내 브롤러 초록 원 & 초록 HP바 (강한 Green 크로마 필터)
+
+                          if (xf in 0.34f..0.66f && yf in 0.26f..0.70f) {
+
+                              if (g > 168 && r < 118 && b < 135 && (2 * g - r - b) > 120) gMask[idx] = true
+
+                          }
+
+                          // 2) 아군 파란 원 (타겟 배제용)
+
+                          if (b > 168 && g > 110 && r < 100 && (2 * b + g - 2 * r) > 220) bMask[idx] = true
+
+                          // 3) 적 브롤러 빨간 원 & 빨간 체력바 (강한 Red 크로마 필터)
+
+                          if (r > 182 && g < 80 && b < 92 && (2 * r - g - b) > 195) rMask[idx] = true
+
+                          // 4) 프레임 차분 기반 고속 탄환 픽셀
+
+                          if (oldL != null && abs(luma - oldL[idx]) > 56 && (r > 192 || g > 192 || b > 192)) fMask[idx] = true
+
+                      }
+
+                  }
+
+                  prevLuma = currLuma
+
+
+
+                  // 내 브롤러 발밑 초록 원 중심 산출
+
+                  val gBlobs = extractClusters(gMask, sx, sy, 2, 130)
+
+                  var footX = realW * 0.50f; var footY = realH * 0.535f
+
+                  var bestGd = 999999f
+
+                  for (gb in gBlobs) {
+
+                      if (gb.cy in (realH * 0.43f)..(realH * 0.65f)) {
+
+                          val d = hypot(gb.cx - realW * 0.50f, gb.cy - realH * 0.54f)
+
+                          if (d < bestGd) { bestGd = d; footX = gb.cx; footY = gb.cy }
+
+                      }
+
+                  }
+
+                  scanHpAmmoBuffer(footX, footY - realH * 0.108f, sx, sy)
+
+
+
+                  val maxSpd = realW * 0.185f
+
+                  if (myX >= 0f) {
+
+                      myVx = 0.55f * myVx + 0.45f * (latestMx * maxSpd)
+
+                      myVy = 0.55f * myVy + 0.45f * (latestMy * maxSpd)
+
+                  }
+
+                  myX = footX; myY = footY
+
+
+
+                  val bBlobs = extractClusters(bMask, sx, sy, 2, 130)
+
+                  val rBlobs = extractClusters(rMask, sx, sy, 2, 160)
+
+
+
+                  // 적 빨간 클러스터 수직 그룹핑 (머리 위 체력바 + 발밑 빨간 원 -> 발밑 원 좌표로 통일)
+
+                  val enemyCandidates = mutableListOf<Pair<Float, Float>>()
+
+                  val usedR = BooleanArray(rBlobs.size)
+
+                  for (i in rBlobs.indices) {
+
+                      if (usedR[i]) continue
+
+                      val rb = rBlobs[i]
+
+                      var nearBlue = false
+
+                      for (bb in bBlobs) {
+
+                          if (hypot(rb.cx - bb.cx, rb.cy - bb.cy) < realW * 0.058f) { nearBlue = true; break }
+
+                      }
+
+                      if (nearBlue) { usedR[i] = true; continue }
+
+
+
+                      usedR[i] = true
+
+                      var minCy = rb.cy; var maxCy = rb.cy; var maxCx = rb.cx
+
+                      for (j in rBlobs.indices) {
+
+                          if (usedR[j]) continue
+
+                          val r2 = rBlobs[j]
+
+                          if (abs(rb.cx - r2.cx) < realW * 0.055f && abs(rb.cy - r2.cy) < realH * 0.16f) {
+
+                              usedR[j] = true
+
+                              if (r2.cy < minCy) minCy = r2.cy
+
+                              if (r2.cy > maxCy) { maxCy = r2.cy; maxCx = r2.cx }
+
+                          }
+
+                      }
+
+                      if ((maxCy - minCy) > realH * 0.042f) {
+
+                          enemyCandidates.add(Pair(maxCx, maxCy))
+
+                      } else {
+
+                          val hBox = rb.maxY - rb.minY; val wBox = rb.maxX - rb.minX
+
+                          val ey = if (hBox < realH * 0.028f && wBox > hBox * 1.35f) (rb.cy + realH * 0.106f).coerceAtMost(realH * 0.90f) else rb.cy
+
+                          enemyCandidates.add(Pair(rb.cx, ey))
+
+                      }
+
+                  }
+
+
+
+                  var bestEx = -1f; var bestEy = -1f; var bestSc = 999999f
+
+                  for (pt in enemyCandidates) {
+
+                      val dMe = hypot(pt.first - myX, pt.second - myY)
+
+                      if (dMe < realW * 0.042f || dMe > realW * 0.49f) continue
+
+                      val sc = if (enemyFound && targetEx >= 0f) hypot(pt.first - targetEx, pt.second - targetEy) * 0.62f + dMe * 0.38f else dMe
+
+                      if (sc < bestSc) { bestSc = sc; bestEx = pt.first; bestEy = pt.second }
+
+                  }
+
+
+
+                  if (bestEx >= 0f) {
+
+                      if (enemyFound && targetEx >= 0f && hypot(bestEx - targetEx, bestEy - targetEy) < realW * 0.21f) {
+
+                          val rvx = ((bestEx - targetEx) / dt + myVx * 0.22f).coerceIn(-realW * 0.26f, realW * 0.26f)
+
+                          val rvy = ((bestEy - targetEy) / dt + myVy * 0.22f).coerceIn(-realH * 0.26f, realH * 0.26f)
+
+                          val nvx = enemyVx * 0.60f + rvx * 0.40f
+
+                          val nvy = enemyVy * 0.60f + rvy * 0.40f
+
+                          enemyAx = enemyAx * 0.72f + ((nvx - enemyVx) / dt).coerceIn(-realW * 0.32f, realW * 0.32f) * 0.28f
+
+                          enemyAy = enemyAy * 0.72f + ((nvy - enemyVy) / dt).coerceIn(-realH * 0.32f, realH * 0.32f) * 0.28f
+
+                          enemyVx = nvx; enemyVy = nvy
+
+                      } else {
+
+                          enemyVx = 0f; enemyVy = 0f; enemyAx = 0f; enemyAy = 0f
+
+                      }
+
+                      targetEx = bestEx; targetEy = bestEy; enemyFound = true; lastEnemyMs = now
+
+                  } else if (now - lastEnemyMs > 850L) {
+
+                      enemyFound = false
+
+                  }
+
+
+
+                  // 소형 고속 탄환 추적
+
+                  val cBlobs = extractClusters(fMask, sx, sy, 2, 22)
+
+                  val projs = mutableListOf<Proj>()
+
+                  for (cb in cBlobs) {
+
+                      var bo: Blob? = null; var bd = realW * 0.20f
+
+                      for (ob in prevBlobs) {
+
+                          val d = hypot(cb.cx - ob.cx, cb.cy - ob.cy)
+
+                          if (d < bd && d > 8f) { bd = d; bo = ob }
+
+                      }
+
+                      if (bo != null) {
+
+                          val vx = (cb.cx - bo.cx) / dt; val vy = (cb.cy - bo.cy) / dt
+
+                          val spd = hypot(vx, vy)
+
+                          if (spd >= realW * 0.19f) projs.add(Proj(cb.cx, cb.cy, vx, vy, spd))
+
+                      }
+
+                  }
+
+                  prevBlobs = cBlobs
+
+
+
+                  val dodge = computePotentialFieldDodge(projs, myX, myY, myVx, myVy, maxSpd)
+
+                  updateTacticalVectors(dodge.first, dodge.second)
+
+              }
+
+
+
+              private fun updateTacticalVectors(dodgeX: Float, dodgeY: Float) {
+
+                  val underThreat = hypot(dodgeX, dodgeY) > 0.08f
+
+                  val now = System.currentTimeMillis()
+
+                  var eDist = 9999f
+
+
+
+                  if (enemyFound && targetEx >= 0f) {
+
+                      eDist = hypot(targetEx - myX, targetEy - myY)
+
+                      // 초근접(0.125W 이내)일 때는 드래그 대신 즉발 오토에임 탭(Quick-Fire)으로 100% 명중 유도!
+
+                      latestQuickTap = eDist < realW * 0.125f
+
+
+
+                      val bulletSpd = realW * 0.62f
+
+                      val tHit = (eDist / bulletSpd).coerceIn(0f, 0.48f)
+
+                      var ldx = enemyVx * tHit + 0.5f * enemyAx * tHit * tHit
+
+                      var ldy = enemyVy * tHit + 0.5f * enemyAy * tHit * tHit
+
+
+
+                      // 적의 급격한 방향 전환(가속도와 속도가 반대) 시 리드폭 자동 감쇠
+
+                      if (enemyVx * enemyAx + enemyVy * enemyAy < 0f) {
+
+                          ldx *= 0.72f; ldy *= 0.72f
+
+                      }
+
+
+
+                      val maxL = (eDist * 0.30f).coerceAtMost(realW * 0.105f)
+
+                      val lLen = hypot(ldx, ldy)
+
+                      if (lLen > maxL && lLen > 1f) { ldx = (ldx / lLen) * maxL; ldy = (ldy / lLen) * maxL }
+
+
+
+                      predEx = targetEx + ldx; predEy = targetEy + ldy
+
+                      val ang = atan2(predEy - myY, predEx - myX)
+
+                      latestAx = cos(ang); latestAy = sin(ang)
+
+
+
+                      val lowHpHold = (combatMode != 2) && myHp < 0.38f && eDist > realW * 0.15f
+
+                      val minAmmo = if (combatMode == 2) 0.65f else 0.85f
+
+                      latestFire = !lowHpHold && myAmmo >= minAmmo && eDist < realW * 0.47f
+
+                  } else {
+
+                      latestFire = false; latestQuickTap = false
+
+                  }
+
+
+
+                  if (now - lastStrafeFlipMs > 880L) { strafeSign = -strafeSign; lastStrafeFlipMs = now }
+
+                  var bx = cmdX; var by = cmdY
+
+
+
+                  if (enemyFound && eDist in 10f..(realW * 0.49f)) {
+
+                      val ux = (targetEx - myX) / eDist; val uy = (targetEy - myY) / eDist
+
+                      val px = -uy * strafeSign; val py = ux * strafeSign
+
+
+
+                      if (myHp < 0.40f && combatMode != 2) {
+
+                          bx = -ux * 0.78f + px * 0.45f; by = -uy * 0.78f + py * 0.45f
+
+                      } else if (hypot(cmdX, cmdY) < 0.15f) {
+
+                          val idealDist = when (combatMode) {
+
+                              1 -> realW * 0.32f
+
+                              2 -> realW * 0.16f
+
+                              else -> realW * 0.25f
+
+                          }
+
+                          val rf = ((eDist - idealDist) / (realW * 0.15f)).coerceIn(-0.90f, 0.90f)
+
+                          bx = ux * rf * 0.68f + px * 0.74f; by = uy * rf * 0.68f + py * 0.74f
+
+                      }
+
+                  } else if (hypot(bx, by) < 0.15f) {
+
+                      bx = 0.82f * strafeSign; by = 0.25f * strafeSign
+
+                  }
+
+
+
+                  val dodgeWeight = if (combatMode == 1) 0.93f else 0.85f
+
+                  var fx = if (underThreat) dodgeX * dodgeWeight + bx * (1f - dodgeWeight) else bx
+
+                  var fy = if (underThreat) dodgeY * dodgeWeight + by * (1f - dodgeWeight) else by
+
+                  val mLen = hypot(fx, fy)
+
+                  if (mLen > 0.05f) { fx /= mLen; fy /= mLen }
+
+
+
+                  latestMx = fx; latestMy = fy
+
+
+
+                  val hpPct = (myHp * 100).toInt().coerceIn(5, 100)
+
+                  hpAmmoText?.text = "HP: ${hpPct}% | 탄창: ${String.format("%.1f", myAmmo)}칸 | 위협탄: ${activeThreatCount}발"
+
+                  hpAmmoText?.setTextColor(if (hpPct < 40) Color.parseColor("#FB7185") else Color.parseColor("#34D399"))
+
+
+
+                  statusText?.text = when {
+
+                      underThreat -> "⚡ 16방향 포텐셜 회피 기동 중!"
+
+                      hpPct < 40 && combatMode != 2 -> "🩹 저체력 자연회복 유도 (사격중지·후퇴)"
+
+                      enemyFound && latestFire && latestQuickTap -> "🔥 초근접 즉발 속사(Quick-Fire) 타격!"
+
+                      enemyFound && latestFire -> "🎯 발밑 빨간원 2차 가속도 리드샷 발사"
+
+                      enemyFound -> "🕹️ 적 거리유지 카이팅 + 리드각 추적"
+
+                      else -> "🕹️ 연속 홀드-드래그 전장 탐색 중"
+
+                  }
+
+              }
+
+
+
+              private fun buildRadialPath(sx: Float, sy: Float, ux: Float, uy: Float, r: Float, loops: Int): Path {
+
+                  val ix = sx + ux * (r * 0.92f); val iy = sy + uy * (r * 0.92f)
+
+                  val ox = sx + ux * (r * 1.04f); val oy = sy + uy * (r * 1.04f)
+
+                  return Path().apply {
+
+                      moveTo(sx, sy); lineTo(ox, oy)
+
+                      for (i in 0 until loops) { lineTo(ix, iy); lineTo(ox, oy) }
+
+                  }
+
+              }
+
+
+
+              private fun dispatchSmartPadGesture(mx: Float, my: Float, ax: Float, ay: Float, fire: Boolean, quickTap: Boolean) {
+
+                  if (!aiActive) return
+
+                  val builder = GestureDescription.Builder(); var has = false
+
+                  val ml = hypot(mx, my)
+
+                  if (ml > 0.1f) {
+
+                      val mp = buildRadialPath(realW * 0.15f, realH * 0.76f, mx / ml, my / ml, realH * 0.145f, 5)
+
+                      builder.addStroke(GestureDescription.StrokeDescription(mp, 0L, 265L, false))
+
+                      has = true
+
+                  }
+
+                  val al = hypot(ax, ay)
+
+                  if (fire && al > 0.1f) {
+
+                      val rpx = realW * 0.84f; val rpy = realH * 0.74f
+
+                      if (quickTap) {
+
+                          val tapPath = Path().apply { moveTo(rpx, rpy); lineTo(rpx + 2f, rpy + 2f) }
+
+                          builder.addStroke(GestureDescription.StrokeDescription(tapPath, 15L, 45L, false))
+
+                      } else {
+
+                          val ap = buildRadialPath(rpx, rpy, ax / al, ay / al, realH * 0.165f, 3)
+
+                          builder.addStroke(GestureDescription.StrokeDescription(ap, 15L, 185L, false))
+
+                      }
+
+                      has = true
+
+                  }
+
+                  if (has) dispatchGesture(builder.build(), null, null)
+
+              }
+
+
+
+              private fun scanHpAmmoBuffer(cx: Float, cy: Float, sx: Float, sy: Float) {
+
+                  val gyHp = (cy / sy).toInt().coerceIn(4, gridH - 6)
+
+                  val gyAm = ((cy + realH * 0.019f) / sy).toInt().coerceIn(4, gridH - 5)
+
+                  val gxStart = ((cx - realW * 0.028f) / sx).toInt().coerceIn(4, gridW - 20)
+
+                  val gxEnd = ((cx + realW * 0.028f) / sx).toInt().coerceIn(gxStart + 2, gridW - 4)
+
+                  var hpC = 0; var amC = 0; val total = (gxEnd - gxStart + 1).coerceAtLeast(1)
+
+                  for (gx in gxStart..gxEnd) {
+
+                      val c1 = pixelBuf[gyHp * gridW + gx]
+
+                      val r1 = (c1 shr 16) and 0xFF; val g1 = (c1 shr 8) and 0xFF; val b1 = c1 and 0xFF
+
+                      if ((g1 > 155 && b1 < 115) || (r1 > 175 && g1 > 135 && b1 < 95)) hpC++
+
+
+
+                      val c2 = pixelBuf[gyAm * gridW + gx]
+
+                      val r2 = (c2 shr 16) and 0xFF; val g2 = (c2 shr 8) and 0xFF; val b2 = c2 and 0xFF
+
+                      if (r2 > 190 && g2 in 78..222 && b2 < 90) amC++
+
+                  }
+
+                  if (hpC > 1) myHp = myHp * 0.7f + (hpC.toFloat() / total.toFloat()).coerceIn(0.1f, 1f) * 0.3f
+
+                  myAmmo = myAmmo * 0.6f + (if (amC == 0) 2.2f else ((amC.toFloat() / total.toFloat()) * 3f).coerceIn(0f, 3f)) * 0.4f
+
+              }
+
+
+
+              private fun extractClusters(mask: BooleanArray, sx: Float, sy: Float, minC: Int, maxC: Int): List<Blob> {
+
+                  val vis = BooleanArray(mask.size); val res = mutableListOf<Blob>(); val q = IntArray(256)
+
+                  for (gy in 2 until gridH - 2) {
+
+                      for (gx in 2 until gridW - 2) {
+
+                          val s = gy * gridW + gx; if (!mask[s] || vis[s]) continue
+
+                          var sumX = 0f; var sumY = 0f; var x0 = 99999f; var x1 = 0f; var y0 = 99999f; var y1 = 0f
+
+                          var cnt = 0; var h = 0; var t = 0
+
+                          q[t++] = s; vis[s] = true
+
+                          while (h < t && cnt < maxC + 10) {
+
+                              val cur = q[h++]; val cy = cur / gridW; val cx = cur % gridW
+
+                              val px = cx * sx; val py = cy * sy
+
+                              sumX += px; sumY += py
+
+                              if (px < x0) x0 = px; if (px > x1) x1 = px; if (py < y0) y0 = py; if (py > y1) y1 = py
+
+                              cnt++
+
+                              for (ny in (cy - 2)..(cy + 2)) for (nx in (cx - 2)..(cx + 2)) {
+
+                                  if (nx in 1 until gridW - 1 && ny in 1 until gridH - 1) {
+
+                                      val ni = ny * gridW + nx
+
+                                      if (mask[ni] && !vis[ni] && t < q.size) { vis[ni] = true; q[t++] = ni }
+
+                                  }
+
+                              }
+
+                          }
+
+                          if (cnt in minC..maxC) res.add(Blob(sumX / cnt, sumY / cnt, cnt, x0, x1, y0, y1))
+
+                      }
+
+                  }
+
+                  return res
+
+              }
+
+
+
+              // 16방향 포텐셜 필드 탄환 회피 (다중 탄환 교차 궤적 및 화면 가장자리 코너 몰림 동시 회피)
+
+              private fun computePotentialFieldDodge(projs: List<Proj>, px: Float, py: Float, vx: Float, vy: Float, maxS: Float): Pair<Float, Float> {
+
+                  val threats = projs.filter { p ->
+
+                      val rvx = p.vx - vx; val rvy = p.vy - vy; val rs = hypot(rvx, rvy).coerceAtLeast(1f)
+
+                      val al = ((px - p.x) * rvx + (py - p.y) * rvy) / rs
+
+                      al in -20f..(realW * 0.44f) && hypot(px - (p.x + (rvx / rs) * max(0f, al)), py - (p.y + (rvy / rs) * max(0f, al))) < realW * 0.075f
+
+                  }
+
+                  activeThreatCount = threats.size
+
+                  if (threats.isEmpty()) return Pair(0f, 0f)
+
+
+
+                  var bx = 0f; var by = 0f; var bs = -999999f
+
+                  for (i in 0 until 16) {
+
+                      val a = (i * Math.PI / 8.0).toFloat()
+
+                      val ux = cos(a); val uy = sin(a)
+
+                      var minClear = 999999f
+
+                      for (th in threats) {
+
+                          val rvx = th.vx - ux * maxS; val rvy = th.vy - uy * maxS; val rs = hypot(rvx, rvy).coerceAtLeast(1f)
+
+                          val al = (((px - th.x) * rvx + (py - th.y) * rvy) / rs).coerceIn(0f, realW * 0.42f)
+
+                          val d = hypot(px - (th.x + (rvx / rs) * al), py - (th.y + (rvy / rs) * al))
+
+                          if (d < minClear) minClear = d
+
+                      }
+
+                      val sc = minClear + (ux * cmdX + uy * cmdY) * 26f
+
+                      if (sc > bs) { bs = sc; bx = ux; by = uy }
+
+                  }
+
+                  return Pair(bx, by)
+
+              }
+
+          }""")
+
+          print("Project v4.0 PRO generated successfully.")
+
+
+
+      - name: Setup Gradle
+
+        uses: gradle/actions/setup-gradle@v3
+
+        with:
+
+          gradle-version: '8.5'
+
+          cache-disabled: true
+
+
+
+      - name: Build Debug APK
+
+        run: gradle assembleDebug --no-daemon --stacktrace
+
+
+
+      - name: Package APK
+
+        run: cp app/build/outputs/apk/debug/app-debug.apk Brawl_AI_Overlay_v4.0_PRO.apk
+
+
+
+      - name: Upload APK Artifact
+
+        uses: actions/upload-artifact@v4
+
+        with:
+
+          name: Brawl_AI_Overlay_v4.0_PRO_APK
+
+          path: Brawl_AI_Overlay_v4.0_PRO.apk
+
+
+
+      - name: Publish APK Release
+
+        continue-on-error: true
+
+        env:
+
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+        run: |
+
+          gh release delete v1.0 --cleanup-tag --yes || true
+
+          gh release delete v2.0 --cleanup-tag --yes || true
+
+          gh release delete v3.0 --cleanup-tag --yes || true
+
+          gh release delete v3.1 --cleanup-tag --yes || true
+
+          gh release delete v3.2 --cleanup-tag --yes || true
+
+          gh release delete v3.3 --cleanup-tag --yes || true
+
+          gh release delete v3.4 --cleanup-tag --yes || true
+
+          gh release delete v4.0 --cleanup-tag --yes || true
+
+          gh release create v4.0 Brawl_AI_Overlay_v4.0_PRO.apk --title "Brawl AI Overlay v4.0 PRO 최신 설치파일 (APK)" --notes "v4.0 PRO: 초고속 픽셀 버퍼 비전 엔진 + 16방향 포텐셜 회피 + 초근접 속사/2차 가속도 리드샷 하이브리드 + 전투 모드 스위치"
+
